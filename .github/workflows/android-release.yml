@@ -27,6 +27,10 @@ on:
         required: false
         type: string
         default: "alpha"
+      play-flavor:
+        required: false
+        type: string
+        default: ""
       prerelease:
         required: false
         type: boolean
@@ -87,11 +91,10 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew :app:bundleRelease -PenableApkSplits=false
 
-      - name: Prepare AAB artifact
+      - name: Prepare AAB artifacts
         run: |
           mkdir -p artifacts
-          cp app/build/outputs/bundle/release/app-release.aab \
-             "artifacts/${{ inputs.app-slug }}-${{ steps.version.outputs.version_name }}.aab"
+          find app/build/outputs/bundle -name "*.aab" -exec cp {} artifacts/ \;
 
       - name: Upload AAB to Google Play
         if: inputs.play-track != '' && inputs.play-track != 'none'
@@ -99,7 +102,7 @@ jobs:
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: ${{ inputs.application-id }}
-          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          releaseFiles: app/build/outputs/bundle/${{ inputs.play-flavor }}Release/app-release.aab
           track: ${{ inputs.play-track }}
           status: completed
           whatsNewDirectory: fastlane/metadata/android
@@ -115,15 +118,13 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease -PenableApkSplits=true -PincludeUniversalApk=true
 
-      - name: Prepare APKs
+      - name: Prepare APK artifacts
         run: |
           mkdir -p artifacts
-          for apk in app/build/outputs/apk/release/*.apk; do
-            if [ -f "$apk" ]; then
-              arch=$(echo "$apk" | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86|universal)')
-              if [ -n "$arch" ]; then
-                cp "$apk" "artifacts/${{ inputs.app-slug }}-${{ steps.version.outputs.version_name }}-${arch}.apk"
-              fi
+          find app/build/outputs/apk -name "*.apk" | while IFS= read -r apk; do
+            arch=$(echo "$apk" | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86|universal)')
+            if [ -n "$arch" ]; then
+              cp "$apk" "artifacts/${{ inputs.app-slug }}-${{ steps.version.outputs.version_name }}-${arch}.apk"
             fi
           done
 
