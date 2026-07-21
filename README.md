@@ -60,8 +60,6 @@ Auto-approve + auto-merge all Dependabot PRs.
 jobs:
   dependabot:
     uses: mlm-games/ci/.github/workflows/dependabot-auto-merge.yml@v1
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 ## Usage
