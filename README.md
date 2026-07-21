@@ -1,6 +1,6 @@
 # ci
 
-Shared reusable GitHub Actions workflows for projects that are structured similar to my projects.
+Shared reusable GitHub Actions workflows for projects that are structured like my projects.
 
 ## Workflows
 
