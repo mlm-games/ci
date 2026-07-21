@@ -1,0 +1,75 @@
+name: Android CI
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        required: false
+        type: string
+        default: "21"
+      java-distribution:
+        required: false
+        type: string
+        default: "corretto"
+      gradle-version:
+        required: false
+        type: string
+        default: ""
+      build-command:
+        required: false
+        type: string
+        default: "./gradlew assembleDebug"
+      test-command:
+        required: false
+        type: string
+        default: "./gradlew test"
+      lint-command:
+        required: false
+        type: string
+        default: "./gradlew lint"
+      artifact-pattern:
+        required: false
+        type: string
+        default: "app/build/outputs/**/*.apk"
+      artifact-name:
+        required: false
+        type: string
+        default: "debug-apk"
+      upload-artifact:
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: ${{ inputs.java-distribution }}
+          cache: gradle
+
+      - name: Setup Gradle
+        if: inputs.gradle-version != ''
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: ${{ inputs.gradle-version }}
+
+      - name: Build
+        run: ${{ inputs.build-command }}
+
+      - name: Run tests
+        run: ${{ inputs.test-command }}
+
+      - name: Run lint
+        run: ${{ inputs.lint-command }}
+
+      - name: Upload build artifacts
+        if: inputs.upload-artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.artifact-pattern }}

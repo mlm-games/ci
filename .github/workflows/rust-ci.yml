@@ -1,0 +1,76 @@
+name: Rust CI
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        required: false
+        type: string
+        default: "."
+      msrv:
+        required: false
+        type: string
+        default: ""
+      run-clippy:
+        required: false
+        type: boolean
+        default: true
+      run-fmt:
+        required: false
+        type: boolean
+        default: true
+      run-test:
+        required: false
+        type: boolean
+        default: true
+      run-audit:
+        required: false
+        type: boolean
+        default: false
+      features:
+        required: false
+        type: string
+        default: ""
+      extra-targets:
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: ${{ inputs.extra-targets }}
+
+      - name: Install MSRV toolchain
+        if: inputs.msrv != ''
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ inputs.msrv }}
+
+      - name: Fmt check
+        if: inputs.run-fmt
+        run: cargo fmt --all -- --check
+
+      # - name: Clippy
+      #   if: inputs.run-clippy
+      #   run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test
+        if: inputs.run-test
+        run: cargo test --all-features
+
+      - name: Audit
+        if: inputs.run-audit
+        uses: actions-rust-lang/audit@v1

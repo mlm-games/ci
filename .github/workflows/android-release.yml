@@ -1,0 +1,183 @@
+name: Android Release
+on:
+  workflow_call:
+    inputs:
+      app-name:
+        required: true
+        type: string
+      app-slug:
+        required: true
+        type: string
+      application-id:
+        required: true
+        type: string
+      java-version:
+        required: false
+        type: string
+        default: "21"
+      java-distribution:
+        required: false
+        type: string
+        default: "corretto"
+      build-gradle-path:
+        required: false
+        type: string
+        default: "app/build.gradle.kts"
+      play-track:
+        required: false
+        type: string
+        default: "alpha"
+      prerelease:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      KEYSTORE:
+        required: true
+      KEYSTORE_PASSPHRASE:
+        required: true
+      STORE_PASSWORD:
+        required: true
+      KEY_ALIAS:
+        required: true
+      KEY_PASSWORD:
+        required: true
+      PLAY_SERVICE_ACCOUNT_JSON:
+        required: false
+
+jobs:
+  prepare-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      old_version_name: ${{ steps.version.outputs.old_version_name }}
+      version_name: ${{ steps.version.outputs.version_name }}
+      base_version_code: ${{ steps.version.outputs.version_code }}
+      build_date: ${{ steps.version.outputs.build_date }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: ${{ inputs.java-distribution }}
+
+      - id: version
+        name: Update Version Numbers
+        run: |
+          OLD_VERSION_CODE=$(grep "versionCode" ${{ inputs.build-gradle-path }} | head -1 | grep -oE '[0-9]+')
+          OLD_VERSION_NAME=$(grep "versionName" ${{ inputs.build-gradle-path }} | head -1 | grep -oE '"([^"]+)"' | tr -d '"')
+
+          NEW_VERSION_CODE=$((OLD_VERSION_CODE + 10))
+
+          IFS='.' read -ra VERSION_PARTS <<< "$OLD_VERSION_NAME"
+          MINOR=$((VERSION_PARTS[2] + 1))
+          VERSION_PARTS[2]=$MINOR
+          NEW_VERSION_NAME="${VERSION_PARTS[0]}.${VERSION_PARTS[1]}.${VERSION_PARTS[2]}"
+
+          BUILD_DATE=$(date +'%Y%m%d')
+
+          echo "old_version_name=$OLD_VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_name=$NEW_VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$NEW_VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "build_date=$BUILD_DATE" >> $GITHUB_OUTPUT
+
+          sed -i "s/versionCode = $OLD_VERSION_CODE/versionCode = $NEW_VERSION_CODE/" ${{ inputs.build-gradle-path }}
+          sed -i "s/versionName = \"$OLD_VERSION_NAME\"/versionName = \"$NEW_VERSION_NAME\"/" ${{ inputs.build-gradle-path }}
+
+      - name: Commit Changes
+        id: commit-and-push
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git add .
+          git commit -m "chore: bump version to ${{ steps.version.outputs.version_name }} [skip ci]" || echo "No changes to commit"
+          git push
+          echo "commit_sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+  build-and-release:
+    needs: prepare-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-version.outputs.commit_sha }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: ${{ inputs.java-distribution }}
+          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.KEYSTORE }}" > release.keystore.asc
+          gpg -d --passphrase "${{ secrets.KEYSTORE_PASSPHRASE }}" --batch release.keystore.asc > release.keystore
+
+      - name: Build AAB
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew :app:bundleRelease -PenableApkSplits=false
+
+      - name: Prepare AAB artifact
+        run: |
+          mkdir -p artifacts
+          cp app/build/outputs/bundle/release/app-release.aab \
+             "artifacts/${{ inputs.app-slug }}-${{ needs.prepare-version.outputs.version_name }}.aab"
+
+      - name: Upload AAB to Google Play
+        if: secrets.PLAY_SERVICE_ACCOUNT_JSON != ''
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ inputs.application-id }}
+          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          track: ${{ inputs.play-track }}
+          status: completed
+          whatsNewDirectory: fastlane/metadata/android
+
+      - name: Clean before APK build
+        run: ./gradlew clean
+
+      - name: Build APK splits
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease -PenableApkSplits=true -PincludeUniversalApk=true
+
+      - name: Prepare APKs
+        run: |
+          mkdir -p artifacts
+          for apk in app/build/outputs/apk/release/*.apk; do
+            if [ -f "$apk" ]; then
+              arch=$(echo "$apk" | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86|universal)')
+              if [ -n "$arch" ]; then
+                cp "$apk" "artifacts/${{ inputs.app-slug }}-${{ needs.prepare-version.outputs.version_name }}-${arch}.apk"
+              fi
+            fi
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/*
+          name: ${{ inputs.app-name }} ${{ needs.prepare-version.outputs.version_name }}
+          tag_name: ${{ needs.prepare-version.outputs.version_name }}
+          target_commitish: ${{ needs.prepare-version.outputs.commit_sha }}
+          prerelease: ${{ inputs.prerelease }}
