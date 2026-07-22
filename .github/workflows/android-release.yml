@@ -39,10 +39,6 @@ on:
         required: false
         type: boolean
         default: true
-      auto-bump-version:
-        required: false
-        type: boolean
-        default: false
     secrets:
       KEYSTORE:
         required: true
@@ -135,29 +131,6 @@ jobs:
               cp "$apk" "artifacts/${{ inputs.app-slug }}-${{ steps.version.outputs.version_name }}-${arch}.apk"
             fi
           done
-
-      - name: Bump version
-        if: inputs.auto-bump-version
-        id: bump
-        run: |
-          OLD_VERSION_CODE=$(grep "versionCode" ${{ inputs.build-gradle-path }} | head -1 | grep -oE '[0-9]+')
-          OLD_VERSION_NAME=$(grep "versionName" ${{ inputs.build-gradle-path }} | head -1 | grep -oE '"([^"]+)"' | tr -d '"')
-
-          NEW_VERSION_CODE=$((OLD_VERSION_CODE + 10))
-
-          IFS='.' read -ra VERSION_PARTS <<< "$OLD_VERSION_NAME"
-          MINOR=$((VERSION_PARTS[2] + 1))
-          VERSION_PARTS[2]=$MINOR
-          NEW_VERSION_NAME="${VERSION_PARTS[0]}.${VERSION_PARTS[1]}.${VERSION_PARTS[2]}"
-
-          sed -i -E "s/versionCode\s*[= ]\s*$OLD_VERSION_CODE/versionCode = $NEW_VERSION_CODE/" ${{ inputs.build-gradle-path }}
-          sed -i -E "s/versionName\s*[= ]\s*\"$OLD_VERSION_NAME\"/versionName = \"$NEW_VERSION_NAME\"/" ${{ inputs.build-gradle-path }}
-
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
-          git add .
-          git commit -m "chore: bump version to $NEW_VERSION_NAME [skip ci]" || echo "No changes to commit"
-          git push
 
       - name: Generate Release Notes
         if: inputs.generate-release-notes
