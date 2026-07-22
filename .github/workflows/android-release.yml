@@ -39,6 +39,10 @@ on:
         required: false
         type: boolean
         default: true
+      auto-bump-version:
+        required: false
+        type: boolean
+        default: false
     secrets:
       KEYSTORE:
         required: true
@@ -54,13 +58,55 @@ on:
         required: false
 
 jobs:
-  build-and-release:
+  prepare-version:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
-      version_name: ${{ steps.version.outputs.version_name }}
-      version_code: ${{ steps.version.outputs.version_code }}
+      version_name: ${{ steps.bump.outputs.version_name || steps.version.outputs.version_name }}
+      version_code: ${{ steps.bump.outputs.version_code || steps.version.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: version
+        name: Read current version
+        run: |
+          VERSION_CODE=$(grep "versionCode" ${{ inputs.build-gradle-path }} | head -1 | grep -oE '[0-9]+')
+          VERSION_NAME=$(grep "versionName" ${{ inputs.build-gradle-path }} | head -1 | grep -oE '"([^"]+)"' | tr -d '"')
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
+
+      - name: Bump version
+        if: inputs.auto-bump-version
+        id: bump
+        run: |
+          OLD_VERSION_CODE=$(grep "versionCode" ${{ inputs.build-gradle-path }} | head -1 | grep -oE '[0-9]+')
+          OLD_VERSION_NAME=$(grep "versionName" ${{ inputs.build-gradle-path }} | head -1 | grep -oE '"([^"]+)"' | tr -d '"')
+
+          NEW_VERSION_CODE=$((OLD_VERSION_CODE + 10))
+
+          IFS='.' read -ra VERSION_PARTS <<< "$OLD_VERSION_NAME"
+          MINOR=$((VERSION_PARTS[2] + 1))
+          VERSION_PARTS[2]=$MINOR
+          NEW_VERSION_NAME="${VERSION_PARTS[0]}.${VERSION_PARTS[1]}.${VERSION_PARTS[2]}"
+
+          echo "version_name=$NEW_VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$NEW_VERSION_CODE" >> $GITHUB_OUTPUT
+
+          sed -i -E "s/versionCode\s*[= ]\s*$OLD_VERSION_CODE/versionCode = $NEW_VERSION_CODE/" ${{ inputs.build-gradle-path }}
+          sed -i -E "s/versionName\s*[= ]\s*\"$OLD_VERSION_NAME\"/versionName = \"$NEW_VERSION_NAME\"/" ${{ inputs.build-gradle-path }}
+
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git add .
+          git commit -m "chore: bump version to $NEW_VERSION_NAME [skip ci]" || echo "No changes to commit"
+          git push
+
+  build-and-release:
+    needs: prepare-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
 
@@ -73,14 +119,6 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
-
-      - id: version
-        name: Read current version
-        run: |
-          VERSION_CODE=$(grep "versionCode" ${{ inputs.build-gradle-path }} | head -1 | grep -oE '[0-9]+')
-          VERSION_NAME=$(grep "versionName" ${{ inputs.build-gradle-path }} | head -1 | grep -oE '"([^"]+)"' | tr -d '"')
-          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
-          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
 
       - name: Decode Keystore
         run: |
@@ -128,7 +166,7 @@ jobs:
           find app/build/outputs/apk -name "*.apk" | while IFS= read -r apk; do
             arch=$(echo "$apk" | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86|universal)')
             if [ -n "$arch" ]; then
-              cp "$apk" "artifacts/${{ inputs.app-slug }}-${{ steps.version.outputs.version_name }}-${arch}.apk"
+              cp "$apk" "artifacts/${{ inputs.app-slug }}-${{ needs.prepare-version.outputs.version_name }}-${arch}.apk"
             fi
           done
 
@@ -137,10 +175,10 @@ jobs:
         id: release-notes
         uses: mlm-games/release-notes-generator@main
         with:
-          version: ${{ steps.version.outputs.version_name }}
+          version: ${{ needs.prepare-version.outputs.version_name }}
           changelog-path: 'CHANGELOG.md'
-          version-file-path: './fastlane/metadata/android/en-US/changelogs/${{ steps.version.outputs.version_code }}.txt'
-          version-code: '${{ steps.version.outputs.version_code }}'
+          version-file-path: './fastlane/metadata/android/en-US/changelogs/${{ needs.prepare-version.outputs.version_code }}.txt'
+          version-code: '${{ needs.prepare-version.outputs.version_code }}'
           format: '- {{subject}}'
           exclude-patterns: 'chore:,ci:,docs:,build:,Bump version,Merge pull request,[skip ci]'
           auto-commit: 'false'
@@ -148,15 +186,15 @@ jobs:
       - name: Ensure changelog exists
         run: |
           mkdir -p fastlane/metadata/android/en-US/changelogs
-          if [ ! -f "fastlane/metadata/android/en-US/changelogs/${{ steps.version.outputs.version_code }}.txt" ]; then
-            echo "" > "fastlane/metadata/android/en-US/changelogs/${{ steps.version.outputs.version_code }}.txt"
+          if [ ! -f "fastlane/metadata/android/en-US/changelogs/${{ needs.prepare-version.outputs.version_code }}.txt" ]; then
+            echo "" > "fastlane/metadata/android/en-US/changelogs/${{ needs.prepare-version.outputs.version_code }}.txt"
           fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
-          name: ${{ inputs.app-name }} ${{ steps.version.outputs.version_name }}
-          tag_name: ${{ steps.version.outputs.version_name }}
+          name: ${{ inputs.app-name }} ${{ needs.prepare-version.outputs.version_name }}
+          tag_name: ${{ needs.prepare-version.outputs.version_name }}
           prerelease: ${{ inputs.prerelease }}
-          body_path: ./fastlane/metadata/android/en-US/changelogs/${{ steps.version.outputs.version_code }}.txt
+          body_path: ./fastlane/metadata/android/en-US/changelogs/${{ needs.prepare-version.outputs.version_code }}.txt
