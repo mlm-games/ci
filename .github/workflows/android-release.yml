@@ -35,6 +35,10 @@ on:
         required: false
         type: boolean
         default: false
+      generate-release-notes:
+        required: false
+        type: boolean
+        default: true
     secrets:
       KEYSTORE:
         required: true
@@ -128,6 +132,26 @@ jobs:
             fi
           done
 
+      - name: Generate Release Notes
+        if: inputs.generate-release-notes
+        id: release-notes
+        uses: mlm-games/release-notes-generator@main
+        with:
+          version: ${{ steps.version.outputs.version_name }}
+          changelog-path: 'CHANGELOG.md'
+          version-file-path: './fastlane/metadata/android/en-US/changelogs/${{ steps.version.outputs.version_code }}.txt'
+          version-code: '${{ steps.version.outputs.version_code }}'
+          format: '- {{subject}}'
+          exclude-patterns: 'chore:,ci:,docs:,build:,Bump version,Merge pull request,[skip ci]'
+          auto-commit: 'false'
+
+      - name: Ensure changelog exists
+        run: |
+          mkdir -p fastlane/metadata/android/en-US/changelogs
+          if [ ! -f "fastlane/metadata/android/en-US/changelogs/${{ steps.version.outputs.version_code }}.txt" ]; then
+            echo "" > "fastlane/metadata/android/en-US/changelogs/${{ steps.version.outputs.version_code }}.txt"
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -135,3 +159,4 @@ jobs:
           name: ${{ inputs.app-name }} ${{ steps.version.outputs.version_name }}
           tag_name: ${{ steps.version.outputs.version_name }}
           prerelease: ${{ inputs.prerelease }}
+          body_path: ./fastlane/metadata/android/en-US/changelogs/${{ steps.version.outputs.version_code }}.txt
