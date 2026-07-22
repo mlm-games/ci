@@ -109,8 +109,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.sha }}
 
       - name: Set up Java
         uses: actions/setup-java@v5
