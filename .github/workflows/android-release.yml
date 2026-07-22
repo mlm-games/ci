@@ -26,7 +26,7 @@ on:
       play-track:
         required: false
         type: string
-        default: "alpha"
+        default: ""
       play-flavor:
         required: false
         type: string
