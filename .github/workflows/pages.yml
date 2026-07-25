@@ -64,7 +64,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ${{ inputs.dist-dir }}
+          path: ${{ inputs.working-directory }}/${{ inputs.dist-dir }}
 
   deploy:
     runs-on: ubuntu-latest
