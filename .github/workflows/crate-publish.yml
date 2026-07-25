@@ -3,8 +3,9 @@ on:
   workflow_call:
     inputs:
       crate-name:
-        required: true
+        required: false
         type: string
+        default: ""
       working-directory:
         required: false
         type: string
@@ -25,9 +26,33 @@ on:
         required: false
         type: boolean
         default: true
-    secrets:
-      CARGO_REGISTRY_TOKEN:
+      create-release:
         required: false
+        type: boolean
+        default: true
+      prerelease:
+        required: false
+        type: boolean
+        default: false
+      workspace-publish:
+        required: false
+        type: boolean
+        default: false
+      workspace-exclude:
+        required: false
+        type: string
+        default: ""
+      system-deps:
+        required: false
+        type: string
+        default: ""
+secrets:
+  CARGO_REGISTRY_TOKEN:
+    required: false
+
+concurrency:
+  group: crate-publish-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   version:
@@ -36,8 +61,14 @@ jobs:
       contents: write
     outputs:
       version: ${{ steps.bump.outputs.version || steps.read.outputs.version }}
+      tag: v${{ steps.bump.outputs.version || steps.read.outputs.version }}
+      commit_sha: ${{ steps.commit.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: Swatinem/rust-cache@v2
 
       - id: read
         name: Read current version
@@ -51,9 +82,7 @@ jobs:
         run: |
           OLD_VERSION=$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[0].version')
           IFS='.' read -ra PARTS <<< "$OLD_VERSION"
-          MAJOR="${PARTS[0]}"
-          MINOR="${PARTS[1]}"
-          PATCH="${PARTS[2]}"
+          MAJOR="${PARTS[0]}"; MINOR="${PARTS[1]}"; PATCH="${PARTS[2]}"
           case "${{ inputs.bump-type }}" in
             major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
             minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
@@ -63,50 +92,130 @@ jobs:
           echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
           find . -name Cargo.toml -exec sed -i "s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" {} \;
+          cargo update -w
 
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
           git add -A
-          git commit -m "chore: bump version to $NEW_VERSION [skip ci]" || echo "No changes"
-          git tag "v$NEW_VERSION"
+          git commit -m "chore: bump to v$NEW_VERSION [skip ci]" || echo "No changes"
+          git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
           git push && git push --tags
 
+      - name: Validate tag matches Cargo.toml version
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[0].version')
+          TAG="${{ steps.bump.outputs.version || steps.read.outputs.version }}"
+          if [ "v$VERSION" != "v$TAG" ]; then
+            echo "Version mismatch: tag v$TAG != Cargo.toml v$VERSION"
+            exit 1
+          fi
+
+      - id: commit
+        name: Capture commit SHA
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   publish:
-    if: inputs.publish-crates-io && inputs.crate-name != ''
+    if: inputs.publish-crates-io
     needs: version
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
+    outputs:
+      crate_files: ${{ steps.pkg.outputs.crate_files }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.commit_sha }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install system dependencies
+        if: inputs.system-deps != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ inputs.system-deps }}
+
       - uses: Swatinem/rust-cache@v2
+
+      - name: Cargo package
+        id: pkg
+        run: |
+          set -euxo pipefail
+          PKG_FLAGS="--locked"
+          EXCLUDES="${{ inputs.workspace-exclude }}"
+          if [ "${{ inputs.workspace-publish }}" == "true" ]; then
+            PKG_FLAGS="$PKG_FLAGS --workspace"
+            for ex in $EXCLUDES; do
+              PKG_FLAGS="$PKG_FLAGS --exclude $ex"
+            done
+          fi
+          cargo package $PKG_FLAGS
+          echo "crate_files=$(ls target/package/*.crate | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Upload crate artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: crate
+          path: target/package/*.crate
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
+          PKG_FLAGS="--locked"
+          EXCLUDES="${{ inputs.workspace-exclude }}"
+          if [ "${{ inputs.workspace-publish }}" == "true" ]; then
+            PKG_FLAGS="$PKG_FLAGS --workspace"
+            for ex in $EXCLUDES; do
+              PKG_FLAGS="$PKG_FLAGS --exclude $ex"
+            done
+          fi
           for i in 1 2 3; do
-            if cargo publish --locked; then exit 0; fi
-            echo "Publish failed, retrying in $((i*10))s..."; sleep $((i*10))
+            if cargo publish $PKG_FLAGS 2>&1; then exit 0; fi
+            if cargo metadata --no-deps --format-version=1 2>/dev/null | \
+               jq -e --arg ver "${{ needs.version.outputs.version }}" \
+               '.packages[0].version == $ver' > /dev/null 2>&1; then
+              echo "Version ${{ needs.version.outputs.version }} already published; skipping."
+              exit 0
+            fi
+            echo "Publish failed, retrying in $((i*10))s..." >&2
+            sleep $((i*10))
           done
+          echo "Publish failed after 3 attempts"
           exit 1
 
   release:
-    if: always()
-    needs: publish
+    if: inputs.create-release
+    needs:
+      - version
+      - publish
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - name: Download crate artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: crate
+          path: dist
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum *.crate > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - uses: softprops/action-gh-release@v3
         with:
-          tag_name: v${{ needs.version.outputs.version }}
-          name: v${{ needs.version.outputs.version }}
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ needs.version.outputs.commit_sha }}
           generate_release_notes: ${{ inputs.generate-release-notes }}
+          prerelease: ${{ inputs.prerelease }}
+          files: |
+            dist/*.crate
+            dist/SHA256SUMS.txt
