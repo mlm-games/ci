@@ -14,6 +14,14 @@ on:
         required: false
         type: string
         default: ""
+      args:
+        required: false
+        type: string
+        default: ""
+      build-std:
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -39,6 +47,10 @@ jobs:
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
 
+      - name: Install rust-src (for -Zbuild-std)
+        if: inputs.build-std
+        run: rustup component add rust-src
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Install Trunk
@@ -54,7 +66,7 @@ jobs:
               PUBLIC_URL="/${{ github.event.repository.name }}/"
             fi
           fi
-          trunk build --release --public-url "${PUBLIC_URL}"
+          trunk build --release --public-url "${PUBLIC_URL}" ${{ inputs.args }}
 
       - name: Inject coi-serviceworker for SharedArrayBuffer support
         run: |
