@@ -1,0 +1,77 @@
+name: Deploy WASM to GH Pages
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        required: false
+        type: string
+        default: "."
+      dist-dir:
+        required: false
+        type: string
+        default: "dist"
+      public-url-prefix:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: pages
+        uses: actions/configure-pages@v6
+
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Trunk
+        run: cargo install --locked trunk
+
+      - name: Build (Trunk)
+        run: |
+          PUBLIC_URL="${{ inputs.public-url-prefix }}"
+          if [[ -z "$PUBLIC_URL" ]]; then
+            if [[ "${GITHUB_REPOSITORY}" == "${GITHUB_REPOSITORY_OWNER}/${GITHUB_REPOSITORY_OWNER}.github.io" ]]; then
+              PUBLIC_URL="/"
+            else
+              PUBLIC_URL="/${{ github.event.repository.name }}/"
+            fi
+          fi
+          trunk build --release --public-url "${PUBLIC_URL}"
+
+      - name: Inject coi-serviceworker for SharedArrayBuffer support
+        run: |
+          curl -fsSL https://github.com/gzuidhof/coi-serviceworker/raw/master/coi-serviceworker.js > ${{ inputs.dist-dir }}/coi-serviceworker.js
+          sed -i 's#</body>#<script src="coi-serviceworker.js"></script></body>#' ${{ inputs.dist-dir }}/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ inputs.dist-dir }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
