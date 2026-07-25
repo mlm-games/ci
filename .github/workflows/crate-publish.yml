@@ -46,9 +46,9 @@ on:
         required: false
         type: string
         default: ""
-secrets:
-  CARGO_REGISTRY_TOKEN:
-    required: false
+    secrets:
+      CARGO_REGISTRY_TOKEN:
+        required: false
 
 concurrency:
   group: crate-publish-${{ github.ref }}
