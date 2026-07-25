@@ -2,10 +2,6 @@ name: Crate Publish
 on:
   workflow_call:
     inputs:
-      crate-name:
-        required: false
-        type: string
-        default: ""
       working-directory:
         required: false
         type: string
