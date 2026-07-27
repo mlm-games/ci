@@ -38,12 +38,6 @@ on:
         required: false
         type: string
         default: ""
-      extra-rust-targets:
-        description: 'Comma-separated list of Rust targets to install (e.g. wasm32-unknown-unknown,aarch64-linux-android)'
-        required: false
-        type: string
-        default: ""
-
 jobs:
   desktop:
     name: ${{ inputs.run-test && 'Build & test' || 'Build' }} (${{ matrix.os }})
@@ -100,11 +94,6 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value "$msys2\mingw64\bin"
 
       - uses: Swatinem/rust-cache@v2
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: ${{ inputs.run-clippy && 'clippy,' || '' }}${{ inputs.run-fmt && 'rustfmt' || '' }}
-          targets: ${{ inputs.extra-rust-targets }}
 
       - name: Build
         run: cargo build ${{ inputs.features && format('--features {0}', inputs.features) || '' }}

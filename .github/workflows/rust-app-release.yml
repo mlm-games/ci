@@ -515,8 +515,6 @@ jobs:
     needs:
       - prepare-version
       - build-desktop
-      - build-web
-      - build-universal
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -550,8 +548,6 @@ jobs:
     if: ${{ inputs.itch-username != '' && inputs.itch-game != '' && !cancelled() }}
     needs:
       - build-desktop
-      - build-web
-      - build-universal
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
