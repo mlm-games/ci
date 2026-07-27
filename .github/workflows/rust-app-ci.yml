@@ -1,0 +1,128 @@
+name: Rust Desktop CI
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        required: false
+        type: string
+        default: "."
+      system-deps-linux:
+        required: false
+        type: string
+        default: "libasound2-dev libudev-dev pkg-config libx11-dev libxcb1-dev libxi-dev libxinerama-dev libxrandr-dev libxcursor-dev libfontconfig-dev libwayland-dev libxkbcommon-dev"
+      features:
+        required: false
+        type: string
+        default: ""
+      run-clippy:
+        required: false
+        type: boolean
+        default: false
+      run-fmt:
+        required: false
+        type: boolean
+        default: true
+      run-test:
+        required: false
+        type: boolean
+        default: true
+      extra-checks:
+        description: >
+          Newline-separated list of extra `cargo check` arguments.
+          Example:
+          ```
+          --target wasm32-unknown-unknown --no-default-features
+          --target aarch64-linux-android
+          --features physics
+          ```
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  desktop:
+    name: ${{ inputs.run-test && 'Build & test' || 'Build' }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: ubuntu-26.04-arm
+          - os: macos-latest
+          - os: windows-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y ${{ inputs.system-deps-linux }}
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install pkg-config
+
+      - name: Configure pkg-config (macOS)
+        if: runner.os == 'macOS'
+        run: echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+
+      - name: Set up MSYS2
+        if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          msystem: MINGW64
+          install: >-
+            base-devel
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-pkgconf
+
+      - name: Configure pkg-config and PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msys2 = "${{ steps.msys2.outputs.msys2-location }}"
+          Add-Content -Path $env:GITHUB_ENV -Value "PKG_CONFIG=$msys2\mingw64\bin\pkgconf.exe"
+          Add-Content -Path $env:GITHUB_ENV -Value "PKG_CONFIG_PATH=$msys2\mingw64\lib\pkgconfig"
+          Add-Content -Path $env:GITHUB_PATH -Value "$msys2\mingw64\bin"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: ${{ inputs.run-clippy && 'clippy,' || '' }}${{ inputs.run-fmt && 'rustfmt' || '' }}
+
+      - name: Build
+        run: cargo build ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+
+      - name: Extra checks
+        if: inputs.extra-checks != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            echo "::group::cargo check $line"
+            cargo check $line
+            echo "::endgroup::"
+          done <<< "${{ inputs.extra-checks }}"
+
+      - name: Test
+        if: inputs.run-test
+        run: cargo test --workspace ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+
+      - name: Fmt check
+        if: inputs.run-fmt
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        if: inputs.run-clippy
+        run: cargo clippy --workspace --all-targets ${{ inputs.features && format('--features {0}', inputs.features) || '' }} -- --deny warnings

@@ -1,0 +1,566 @@
+name: Rust App Release
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        required: false
+        type: string
+        default: "."
+      bin-name:
+        required: true
+        type: string
+      app-name:
+        required: false
+        type: string
+        default: ""
+      app-slug:
+        required: false
+        type: string
+        default: ""
+      system-deps-linux:
+        required: false
+        type: string
+        default: "libasound2-dev libudev-dev pkg-config libx11-dev libxcb1-dev libxi-dev libxinerama-dev libxrandr-dev libxcursor-dev libfontconfig-dev libwayland-dev libxkbcommon-dev"
+      features:
+        required: false
+        type: string
+        default: ""
+      auto-bump:
+        required: false
+        type: boolean
+        default: false
+      bump-type:
+        required: false
+        type: string
+        default: "patch"
+      include-android:
+        required: false
+        type: boolean
+        default: false
+      android-api:
+        required: false
+        type: string
+        default: "36"
+      android-build-tools:
+        required: false
+        type: string
+        default: "36.0.0"
+      android-ndk-version:
+        required: false
+        type: string
+        default: "28.2.13676358"
+      java-version:
+        required: false
+        type: string
+        default: "21"
+      java-distribution:
+        required: false
+        type: string
+        default: "temurin"
+      include-web:
+        required: false
+        type: boolean
+        default: false
+      include-universal:
+        required: false
+        type: boolean
+        default: false
+      itch-username:
+        required: false
+        type: string
+        default: ""
+      itch-game:
+        required: false
+        type: string
+        default: ""
+
+    secrets:
+      ANDROID_KEYSTORE_JKS_B64:
+        required: false
+      ANDROID_KEYSTORE_ASC:
+        required: false
+      ANDROID_KEYSTORE_PASSPHRASE:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      BUTLER_API_KEY:
+        required: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  JAVA_VERSION: ${{ inputs.java-version }}
+  JAVA_DISTRIBUTION: ${{ inputs.java-distribution }}
+
+jobs:
+  prepare-version:
+    if: inputs.auto-bump
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version_name: ${{ steps.bump.outputs.version_name }}
+      version_code: ${{ steps.bump.outputs.version_code }}
+      commit_sha: ${{ steps.commit.outputs.commit_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Bump Cargo version
+        id: bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          OLD_VERSION=$(grep -m1 '^version\s*=\s*"' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          IFS='.' read -r MAJ MIN PAT <<<"$OLD_VERSION"; : "${MAJ:=0}" "${MIN:=0}" "${PAT:=0}"
+          case "${{ inputs.bump-type }}" in
+            major) MAJ=$((MAJ+1)); MIN=0; PAT=0 ;;
+            minor) MIN=$((MIN+1)); PAT=0 ;;
+            patch) PAT=$((PAT+1)) ;;
+          esac
+          NEW_VERSION="$MAJ.$MIN.$PAT"
+
+          IFS='.' read -r NMAJ NMIN NPAT <<<"$NEW_VERSION"
+          VERSION_CODE=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
+
+          sed -i "s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
+
+          echo "version_name=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and tag
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add Cargo.toml Cargo.lock 2>/dev/null || true
+          git commit -m "chore: bump to v${{ steps.bump.outputs.version_name }} [skip ci]" || true
+          git tag -a "v${{ steps.bump.outputs.version_name }}" -m "Release v${{ steps.bump.outputs.version_name }}"
+          git push && git push --tags
+          echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build-desktop:
+    name: Build and package (${{ matrix.os }})
+    needs: prepare-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: ubuntu-26.04-arm
+          - os: macos-latest
+          - os: windows-latest
+            rust-target: x86_64-pc-windows-gnu
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.auto-bump && needs.prepare-version.outputs.commit_sha || github.ref_name }}
+
+      - name: Add Rust target (cross-compile)
+        if: matrix.rust-target != ''
+        run: rustup target add ${{ matrix.rust-target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y ${{ inputs.system-deps-linux }}
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install pkg-config
+
+      - name: Configure pkg-config (macOS)
+        if: runner.os == 'macOS'
+        run: echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+
+      - name: Set up MSYS2
+        if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          msystem: MINGW64
+          install: >-
+            base-devel
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-pkgconf
+
+      - name: Configure pkg-config and PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msys2 = "${{ steps.msys2.outputs.msys2-location }}"
+          Add-Content -Path $env:GITHUB_ENV -Value "PKG_CONFIG=$msys2\mingw64\bin\pkgconf.exe"
+          Add-Content -Path $env:GITHUB_ENV -Value "PKG_CONFIG_PATH=$msys2\mingw64\lib\pkgconfig"
+          Add-Content -Path $env:GITHUB_PATH -Value "$msys2\mingw64\bin"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Determine target triple
+        id: triple
+        shell: bash
+        run: |
+          T="${{ matrix.rust-target }}"
+          if [[ -z "$T" ]]; then
+            T="$(rustc -vV | sed -n 's/^host: //p')"
+          fi
+          echo "target=$T" >> "$GITHUB_OUTPUT"
+
+      - name: Build (release)
+        run: cargo build --release --locked --target ${{ steps.triple.outputs.target }} ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+
+      - name: Package (tar.gz) [Linux/macOS]
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          TARGET: ${{ steps.triple.outputs.target }}
+          BIN: ${{ inputs.bin-name }}
+        run: |
+          set -euxo pipefail
+          VER="${{ inputs.auto-bump && needs.prepare-version.outputs.version_name || github.ref_name }}"
+          VER="${VER#v}"
+          OUTDIR="dist/${BIN}-${VER}-${TARGET}"
+          mkdir -p "$OUTDIR"
+          cp "target/${TARGET}/release/${BIN}" "$OUTDIR/${BIN}" 2>/dev/null || cp "target/${TARGET}/release/${BIN}.exe" "$OUTDIR/${BIN}.exe" 2>/dev/null || true
+          for f in README* LICENSE* CHANGELOG*; do [ -e "$f" ] && cp "$f" "$OUTDIR/" || true; done
+          tar -C "dist" -czf "${OUTDIR}.tar.gz" "$(basename "$OUTDIR")"
+
+      - name: Package (zip) [Windows]
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TARGET: ${{ steps.triple.outputs.target }}
+          BIN: ${{ inputs.bin-name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ver = "${{ inputs.auto-bump && needs.prepare-version.outputs.version_name || github.ref_name }}" -replace '^v',''
+          $tgt = $env:TARGET
+          $bin = $env:BIN
+          $out = "dist/$bin-$ver-$tgt"
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+          Copy-Item "target\$tgt\release\$bin.exe" "$out\$bin.exe" -ErrorAction SilentlyContinue
+          foreach ($f in @("README*", "LICENSE*", "CHANGELOG*")) {
+            Get-ChildItem $f -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName "$out\" }
+          }
+          Compress-Archive -Path "$out\*" -DestinationPath "$out.zip"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-desktop-${{ matrix.os }}${{ matrix.rust-target && format('-{0}', matrix.rust-target) || '' }}
+          path: |
+            ${{ inputs.working-directory }}/dist/**/*.tar.gz
+            ${{ inputs.working-directory }}/dist/**/*.zip
+
+  build-android:
+    if: inputs.include-android
+    needs: prepare-version
+    name: Build Android (${{ matrix.abi }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-linux-android
+            abi: arm64-v8a
+          - target: armv7-linux-androideabi
+            abi: armeabi-v7a
+          - target: x86_64-linux-android
+            abi: x86_64
+          - target: i686-linux-android
+            abi: x86
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.auto-bump && needs.prepare-version.outputs.commit_sha || github.ref_name }}
+
+      - uses: actions/setup-java@v5
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: ${{ inputs.java-distribution }}
+
+      - name: Set up Android SDK/NDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android platforms and NDK
+        shell: bash
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-${{ inputs.android-api }}" \
+            "build-tools;${{ inputs.android-build-tools }}" \
+            "ndk;${{ inputs.android-ndk-version }}"
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install cargo-rapk
+        shell: bash
+        run: cargo install cargo-rapk --locked
+
+      - name: Download pinned D8 jar
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/d8.jar" \
+            "https://storage.googleapis.com/r8-releases/raw/8.10.9-dev/r8.jar"
+          echo "ANDROID_D8_JAR=$RUNNER_TEMP/d8.jar" >> "$GITHUB_ENV"
+
+      - name: Prepare release keystore
+        shell: bash
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_JKS_B64 }}
+          KS_ASC: ${{ secrets.ANDROID_KEYSTORE_ASC }}
+          KS_PASSPHRASE: ${{ secrets.ANDROID_KEYSTORE_PASSPHRASE }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${KS_B64:-}" && -z "${KS_ASC:-}" ]]; then
+            echo "No keystore secret provided; building unsigned APK."
+            exit 0
+          fi
+          if [[ -n "${KS_B64:-}" ]]; then
+            printf '%s' "$KS_B64" | base64 -d > release.keystore
+          else
+            [[ -n "${KS_PASSPHRASE:-}" ]] || { echo "Missing ANDROID_KEYSTORE_PASSPHRASE" >&2; exit 1; }
+            printf '%s' "$KS_ASC" > release.keystore.asc
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$KS_PASSPHRASE" --decrypt release.keystore.asc > release.keystore
+            rm -f release.keystore.asc
+          fi
+          if [[ -n "${KS_ALIAS:-}" ]]; then
+            keytool -importkeystore -noprompt \
+              -srckeystore release.keystore -srcstorepass "$KS_PASS" -srcalias "$KS_ALIAS" \
+              -destkeystore release.single.jks -deststorepass "$KS_PASS" -destalias "$KS_ALIAS" -destkeypass "$KS_PASS" \
+              -deststoretype JKS
+            mv release.single.jks release.keystore
+          fi
+          echo "CARGO_RAPK_RELEASE_KEYSTORE=$PWD/release.keystore" >> "$GITHUB_ENV"
+          echo "CARGO_RAPK_RELEASE_KEYSTORE_PASSWORD=$KS_PASS" >> "$GITHUB_ENV"
+
+      - name: Build Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
+          export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
+          export ANDROID_BUILD_TOOLS="${{ inputs.android-build-tools }}"
+          cargo rapk build --release --deterministic --target ${{ matrix.target }} --lib
+          OUT_DIR="target/release/apk"
+          if [ -d "target/${{ matrix.target }}/release/apk" ]; then
+            OUT_DIR="target/${{ matrix.target }}/release/apk"
+          fi
+          APK_SRC=$(ls -1t "$OUT_DIR"/*.apk | head -n1)
+          SLUG="${{ inputs.app-slug }}"
+          [[ -z "$SLUG" ]] && SLUG="${{ inputs.bin-name }}"
+          VER="${{ inputs.auto-bump && needs.prepare-version.outputs.version_name || github.ref_name }}"
+          VER="${VER#v}"
+          mkdir -p dist
+          cp "$APK_SRC" "dist/${SLUG}-${VER}-${{ matrix.abi }}.apk"
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-android-${{ matrix.abi }}
+          path: ${{ inputs.working-directory }}/dist/*.apk
+          if-no-files-found: ignore
+
+  build-universal:
+    if: inputs.include-universal
+    needs: prepare-version
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.auto-bump && needs.prepare-version.outputs.commit_sha || github.ref_name }}
+
+      - uses: actions/setup-java@v5
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: ${{ inputs.java-distribution }}
+
+      - name: Set up Android SDK/NDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android platforms and NDK
+        shell: bash
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-${{ inputs.android-api }}" \
+            "build-tools;${{ inputs.android-build-tools }}" \
+            "ndk;${{ inputs.android-ndk-version }}"
+
+      - name: Install all 4 Rust targets
+        shell: bash
+        run: |
+          rustup target add \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            x86_64-linux-android \
+            i686-linux-android
+
+      - name: Install cargo-rapk
+        shell: bash
+        run: cargo install cargo-rapk --locked
+
+      - name: Download D8 jar
+        shell: bash
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/d8.jar" \
+            "https://storage.googleapis.com/r8-releases/raw/8.10.9-dev/r8.jar"
+          echo "ANDROID_D8_JAR=$RUNNER_TEMP/d8.jar" >> "$GITHUB_ENV"
+
+      - name: Build universal AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
+          cargo rapk build --release --universal --format aab --lib --unsigned
+          SLUG="${{ inputs.app-slug }}"
+          [[ -z "$SLUG" ]] && SLUG="${{ inputs.bin-name }}"
+          VER="${{ inputs.auto-bump && needs.prepare-version.outputs.version_name || github.ref_name }}"
+          VER="${VER#v}"
+          mkdir -p dist
+          cp target/release/apk/${SLUG}.aab "dist/${SLUG}-${VER}-universal.aab"
+
+      - name: Build universal APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
+          cargo rapk build --release --universal --lib --unsigned
+          SLUG="${{ inputs.app-slug }}"
+          [[ -z "$SLUG" ]] && SLUG="${{ inputs.bin-name }}"
+          VER="${{ inputs.auto-bump && needs.prepare-version.outputs.version_name || github.ref_name }}"
+          VER="${VER#v}"
+          mkdir -p dist
+          cp target/release/apk/${SLUG}.apk "dist/${SLUG}-${VER}-universal.apk"
+
+      - name: Upload universal artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-universal
+          path: ${{ inputs.working-directory }}/dist/*.aab
+          if-no-files-found: ignore
+
+      - name: Upload universal APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-universal-apk
+          path: ${{ inputs.working-directory }}/dist/*.apk
+          if-no-files-found: ignore
+
+  build-web:
+    if: inputs.include-web
+    needs: prepare-version
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.auto-bump && needs.prepare-version.outputs.commit_sha || github.ref_name }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (release, wasm)
+        run: cargo build --release --locked --target wasm32-unknown-unknown ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+
+      - name: Copy wasm artifact
+        run: |
+          mkdir -p dist
+          cp target/wasm32-unknown-unknown/release/${{ inputs.bin-name }}.wasm dist/
+
+      - name: Upload web artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-web
+          path: ${{ inputs.working-directory }}/dist/*.wasm
+
+  release:
+    if: ${{ !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    needs:
+      - prepare-version
+      - build-desktop
+      - build-web
+      - build-universal
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.apk" -o -name "*.aab" \) -print0 | xargs -0 sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.auto-bump && format('v{0}', needs.prepare-version.outputs.version_name) || github.ref_name }}
+          name: ${{ inputs.auto-bump && format('v{0}', needs.prepare-version.outputs.version_name) || github.ref_name }}
+          target_commitish: ${{ inputs.auto-bump && needs.prepare-version.outputs.commit_sha || github.sha }}
+          generate_release_notes: true
+          files: |
+            dist/**/*.tar.gz
+            dist/**/*.zip
+            dist/**/*.apk
+            dist/**/*.aab
+            dist/SHA256SUMS.txt
+
+  publish-itch:
+    if: ${{ inputs.itch-username != '' && inputs.itch-game != '' && !cancelled() }}
+    needs:
+      - build-desktop
+      - build-web
+      - build-universal
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+
+      - uses: josephbmanley/butler-publish-itchio-action@master
+        with:
+          butler_username: ${{ inputs.itch-username }}
+          butler_api_key: ${{ secrets.BUTLER_API_KEY }}
+          game: ${{ inputs.itch-game }}
+          binary: dist/
+          channel: linux
