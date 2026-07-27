@@ -38,6 +38,38 @@ on:
         required: false
         type: string
         default: ""
+      include-android:
+        required: false
+        type: boolean
+        default: false
+      android-api:
+        required: false
+        type: string
+        default: "36"
+      android-build-tools:
+        required: false
+        type: string
+        default: "36.0.0"
+      android-ndk-version:
+        required: false
+        type: string
+        default: "28.2.13676358"
+      java-version:
+        required: false
+        type: string
+        default: "21"
+      java-distribution:
+        required: false
+        type: string
+        default: "temurin"
+      android-features:
+        required: false
+        type: string
+        default: ""
+      android-check-rapk:
+        required: false
+        type: boolean
+        default: true
 jobs:
   desktop:
     name: ${{ inputs.run-test && 'Build & test' || 'Build' }} (${{ matrix.os }})
@@ -121,3 +153,50 @@ jobs:
       # - name: Clippy
       #   if: inputs.run-clippy
       #   run: cargo clippy --workspace --all-targets ${{ inputs.features && format('--features {0}', inputs.features) || '' }} -- --deny warnings
+
+  android-check:
+    if: inputs.include-android
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: ${{ inputs.java-distribution }}
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK/NDK
+        shell: bash
+        run: |
+          sdkmanager --install \
+            "platforms;android-${{ inputs.android-api }}" \
+            "build-tools;${{ inputs.android-build-tools }}" \
+            "ndk;${{ inputs.android-ndk-version }}"
+
+      - name: Check Android target
+        run: cargo check --target aarch64-linux-android ${{ inputs.android-features && format('--features {0}', inputs.android-features) || '' }}
+
+      - name: Install cargo-rapk
+        if: inputs.android-check-rapk
+        run: cargo install cargo-rapk --locked
+
+      - name: Download D8 jar
+        if: inputs.android-check-rapk
+        shell: bash
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/d8.jar" \
+            "https://storage.googleapis.com/r8-releases/raw/8.10.9-dev/r8.jar"
+          echo "ANDROID_D8_JAR=$RUNNER_TEMP/d8.jar" >> "$GITHUB_ENV"
+
+      - name: Build unsigned debug APK
+        if: inputs.android-check-rapk
+        shell: bash
+        run: |
+          export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
+          cargo rapk build --target aarch64-linux-android --lib --unsigned
