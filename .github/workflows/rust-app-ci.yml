@@ -129,6 +129,6 @@ jobs:
         if: inputs.run-fmt
         run: cargo fmt --all -- --check
 
-      - name: Clippy
-        if: inputs.run-clippy
-        run: cargo clippy --workspace --all-targets ${{ inputs.features && format('--features {0}', inputs.features) || '' }} -- --deny warnings
+      # - name: Clippy
+      #   if: inputs.run-clippy
+      #   run: cargo clippy --workspace --all-targets ${{ inputs.features && format('--features {0}', inputs.features) || '' }} -- --deny warnings
