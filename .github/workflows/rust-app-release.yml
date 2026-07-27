@@ -103,14 +103,13 @@ env:
 
 jobs:
   prepare-version:
-    if: inputs.auto-bump
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
-      version_name: ${{ steps.bump.outputs.version_name }}
-      version_code: ${{ steps.bump.outputs.version_code }}
-      commit_sha: ${{ steps.commit.outputs.commit_sha }}
+      version_name: ${{ steps.bump.outputs.version_name || '' }}
+      version_code: ${{ steps.bump.outputs.version_code || '0' }}
+      commit_sha: ${{ steps.commit.outputs.commit_sha || '' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -118,6 +117,7 @@ jobs:
 
       - name: Bump Cargo version
         id: bump
+        if: inputs.auto-bump
         shell: bash
         run: |
           set -euo pipefail
@@ -140,6 +140,7 @@ jobs:
 
       - name: Commit and tag
         id: commit
+        if: inputs.auto-bump
         shell: bash
         run: |
           set -euo pipefail
