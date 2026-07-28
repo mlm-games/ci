@@ -175,20 +175,19 @@ jobs:
             "build-tools;${{ inputs.android-build-tools }}" \
             "ndk;${{ inputs.android-ndk-version }}"
 
-      - name: Check Android target
-        run: cargo rapk check
-
       - name: Install cargo-rapk
         if: inputs.android-check-rapk
         run: cargo install cargo-rapk --locked
 
-      - name: Download D8 jar
+      - name: Check Android target
+        if: inputs.android-check-rapk
+        run: cargo rapk check
+
+      - name: Set D8 jar path
         if: inputs.android-check-rapk
         shell: bash
         run: |
-          curl -fsSL -o "$RUNNER_TEMP/d8.jar" \
-            "https://storage.googleapis.com/r8-releases/raw/8.10.9-dev/r8.jar"
-          echo "ANDROID_D8_JAR=$RUNNER_TEMP/d8.jar" >> "$GITHUB_ENV"
+          echo "ANDROID_D8_JAR=$ANDROID_HOME/build-tools/${{ inputs.android-build-tools }}/lib/d8.jar" >> "$GITHUB_ENV"
 
       - name: Build unsigned debug APK
         if: inputs.android-check-rapk
