@@ -46,6 +46,10 @@ on:
         required: false
         type: string
         default: "0.18.3"
+      android-d8-version:
+        required: false
+        type: string
+        default: "8.10.9-dev"
       android-ndk-version:
         required: false
         type: string
@@ -327,7 +331,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL -o "$RUNNER_TEMP/d8.jar" \
-            "https://storage.googleapis.com/r8-releases/raw/8.10.9-dev/r8.jar"
+            "https://storage.googleapis.com/r8-releases/raw/${{ inputs.android-d8-version }}/r8.jar"
           echo "ANDROID_D8_JAR=$RUNNER_TEMP/d8.jar" >> "$GITHUB_ENV"
 
       - name: Prepare release keystore
@@ -435,7 +439,7 @@ jobs:
         shell: bash
         run: |
           curl -fsSL -o "$RUNNER_TEMP/d8.jar" \
-            "https://storage.googleapis.com/r8-releases/raw/8.10.9-dev/r8.jar"
+            "https://storage.googleapis.com/r8-releases/raw/${{ inputs.android-d8-version }}/r8.jar"
           echo "ANDROID_D8_JAR=$RUNNER_TEMP/d8.jar" >> "$GITHUB_ENV"
 
       - name: Build universal AAB
