@@ -66,6 +66,14 @@ on:
         required: false
         type: boolean
         default: true
+      upload-artifacts:
+        required: false
+        type: boolean
+        default: false
+      app-slug:
+        required: false
+        type: string
+        default: ""
 jobs:
   desktop:
     name: ${{ inputs.run-test && 'Build & test' || 'Build' }} (${{ matrix.os }})
@@ -150,6 +158,28 @@ jobs:
       #   if: inputs.run-clippy
       #   run: cargo clippy --workspace --all-targets ${{ inputs.features && format('--features {0}', inputs.features) || '' }} -- --deny warnings
 
+      - name: Upload debug binary
+        if: inputs.upload-artifacts && inputs.app-slug != ''
+        shell: bash
+        run: |
+          set -euxo pipefail
+          TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+          BIN="${{ inputs.app-slug }}"
+          mkdir -p artifacts
+          if [ -f "target/debug/${BIN}" ]; then
+            cp "target/debug/${BIN}" "artifacts/${BIN}-${TARGET}"
+          elif [ -f "target/debug/${BIN}.exe" ]; then
+            cp "target/debug/${BIN}.exe" "artifacts/${BIN}-${TARGET}.exe"
+          fi
+          for f in README* LICENSE* CHANGELOG*; do [ -e "$f" ] && cp "$f" artifacts/ || true; done
+
+      - name: Upload CI artifact
+        if: inputs.upload-artifacts && inputs.app-slug != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ matrix.os }}
+          path: ${{ inputs.working-directory }}/artifacts/
+
   android-check:
     if: inputs.include-android
     runs-on: ubuntu-latest
@@ -195,3 +225,25 @@ jobs:
         run: |
           export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
           cargo rapk build --target aarch64-linux-android --lib --unsigned
+
+      - name: Prepare APK artifact
+        if: inputs.upload-artifacts
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts
+          APK_DIR="target/aarch64-linux-android/debug/apk"
+          if [ ! -d "$APK_DIR" ]; then
+            APK_DIR="target/debug/apk"
+          fi
+          APK_SRC=$(ls -1t "$APK_DIR"/*.apk 2>/dev/null | head -n1)
+          if [ -n "$APK_SRC" ]; then
+            cp "$APK_SRC" artifacts/app-debug.apk
+          fi
+
+      - name: Upload APK artifact
+        if: inputs.upload-artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-arm64
+          path: ${{ inputs.working-directory }}/artifacts/*.apk

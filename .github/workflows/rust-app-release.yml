@@ -6,9 +6,6 @@ on:
         required: false
         type: string
         default: "."
-      bin-name:
-        required: true
-        type: string
       app-name:
         required: false
         type: string
@@ -234,7 +231,7 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ steps.triple.outputs.target }}
-          BIN: ${{ inputs.bin-name }}
+          BIN: ${{ inputs.app-slug }}
         run: |
           set -euxo pipefail
           VER="${{ inputs.auto-bump && needs.prepare-version.outputs.version_name || github.ref_name }}"
@@ -250,7 +247,7 @@ jobs:
         shell: pwsh
         env:
           TARGET: ${{ steps.triple.outputs.target }}
-          BIN: ${{ inputs.bin-name }}
+          BIN: ${{ inputs.app-slug }}
         run: |
           $ErrorActionPreference = "Stop"
           $ver = "${{ inputs.auto-bump && needs.prepare-version.outputs.version_name || github.ref_name }}" -replace '^v',''
@@ -376,7 +373,6 @@ jobs:
           fi
           APK_SRC=$(ls -1t "$OUT_DIR"/*.apk | head -n1)
           SLUG="${{ inputs.app-slug }}"
-          [[ -z "$SLUG" ]] && SLUG="${{ inputs.bin-name }}"
           VER="${{ inputs.auto-bump && needs.prepare-version.outputs.version_name || github.ref_name }}"
           VER="${VER#v}"
           mkdir -p dist
@@ -445,7 +441,6 @@ jobs:
           export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
           cargo rapk build --release --universal --format aab --lib --unsigned
           SLUG="${{ inputs.app-slug }}"
-          [[ -z "$SLUG" ]] && SLUG="${{ inputs.bin-name }}"
           VER="${{ inputs.auto-bump && needs.prepare-version.outputs.version_name || github.ref_name }}"
           VER="${VER#v}"
           mkdir -p dist
@@ -458,7 +453,6 @@ jobs:
           export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
           cargo rapk build --release --universal --lib --unsigned
           SLUG="${{ inputs.app-slug }}"
-          [[ -z "$SLUG" ]] && SLUG="${{ inputs.bin-name }}"
           VER="${{ inputs.auto-bump && needs.prepare-version.outputs.version_name || github.ref_name }}"
           VER="${VER#v}"
           mkdir -p dist
@@ -502,7 +496,7 @@ jobs:
       - name: Copy wasm artifact
         run: |
           mkdir -p dist
-          cp target/wasm32-unknown-unknown/release/${{ inputs.bin-name }}.wasm dist/
+          cp target/wasm32-unknown-unknown/release/${{ inputs.app-slug }}.wasm dist/
 
       - name: Upload web artifact
         uses: actions/upload-artifact@v7
