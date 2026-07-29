@@ -74,6 +74,10 @@ on:
         required: false
         type: string
         default: ""
+      cargo-rapk-version:
+        required: false
+        type: string
+        default: "0.18.3"
 jobs:
   desktop:
     name: ${{ inputs.run-test && 'Build & test' || 'Build' }} (${{ matrix.os }})
@@ -207,7 +211,7 @@ jobs:
 
       - name: Install cargo-rapk
         if: inputs.android-check-rapk
-        run: cargo install cargo-rapk --locked
+        run: cargo install cargo-rapk@${{ inputs.cargo-rapk-version }} --locked
 
       - name: Check Android target
         if: inputs.android-check-rapk

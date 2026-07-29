@@ -42,6 +42,10 @@ on:
         required: false
         type: string
         default: "36.0.0"
+      cargo-rapk-version:
+        required: false
+        type: string
+        default: "0.18.3"
       android-ndk-version:
         required: false
         type: string
@@ -316,7 +320,7 @@ jobs:
 
       - name: Install cargo-rapk
         shell: bash
-        run: cargo install cargo-rapk --locked
+        run: cargo install cargo-rapk@${{ inputs.cargo-rapk-version }} --locked
 
       - name: Download pinned D8 jar
         shell: bash
@@ -425,7 +429,7 @@ jobs:
 
       - name: Install cargo-rapk
         shell: bash
-        run: cargo install cargo-rapk --locked
+        run: cargo install cargo-rapk@${{ inputs.cargo-rapk-version }} --locked
 
       - name: Download D8 jar
         shell: bash
