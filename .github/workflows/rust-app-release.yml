@@ -345,6 +345,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${KS_B64:-}" && -z "${KS_ASC:-}" ]]; then
+            echo "unsigned=true" >> "$GITHUB_ENV"
             echo "No keystore secret provided; building unsigned APK."
             exit 0
           fi
@@ -374,7 +375,7 @@ jobs:
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
           export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
           export ANDROID_BUILD_TOOLS="${{ inputs.android-build-tools }}"
-          cargo rapk build --release --deterministic --target ${{ matrix.target }} --lib
+          cargo rapk build --release --deterministic --target ${{ matrix.target }} --lib ${unsigned:+--unsigned}
           OUT_DIR="target/release/apk"
           if [ -d "target/${{ matrix.target }}/release/apk" ]; then
             OUT_DIR="target/${{ matrix.target }}/release/apk"

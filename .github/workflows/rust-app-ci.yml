@@ -223,12 +223,12 @@ jobs:
         run: |
           echo "ANDROID_D8_JAR=$ANDROID_HOME/build-tools/${{ inputs.android-build-tools }}/lib/d8.jar" >> "$GITHUB_ENV"
 
-      - name: Build unsigned debug APK
+      - name: Build debug APK
         if: inputs.android-check-rapk
         shell: bash
         run: |
           export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
-          cargo rapk build --target aarch64-linux-android --lib --unsigned
+          cargo rapk build --target aarch64-linux-android --lib
 
       - name: Prepare APK artifact
         if: inputs.upload-artifacts
