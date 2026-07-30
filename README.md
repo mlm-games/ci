@@ -62,6 +62,41 @@ jobs:
     uses: mlm-games/ci/.github/workflows/dependabot-auto-merge.yml@v1
 ```
 
+### `aur-upload.yml`
+
+Publish a PKGBUILD to AUR on release. Downloads the Linux binary from the GitHub release, computes SHA256, and pushes to AUR.
+
+```yaml
+jobs:
+  aur:
+    uses: mlm-games/ci/.github/workflows/aur-upload.yml@v1
+    with:
+      pkgname: myapp-bin
+      pkgdesc: "Description of my app"
+      binary-name: myapp-linux-x86_64
+      license: "MIT OR Apache-2.0"
+    secrets:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+```
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `pkgname` | — | AUR package name (required) |
+| `pkgdesc` | — | Package description (required) |
+| `binary-name` | — | Release asset name (required, e.g. `myapp-linux-x86_64`) |
+| `app-slug` | `pkgname` with `-bin` stripped | Installed binary name |
+| `license` | `MIT OR Apache-2.0` | Package license |
+| `depends` | `""` | Space-separated AUR dependencies |
+| `provides` | `""` | Space-separated provides |
+| `conflicts` | `""` | Space-separated conflicts |
+| `arch` | `x86_64` | Package architecture |
+| `maintainer-name` | `""` | AUR maintainer name |
+| `maintainer-email` | `""` | AUR maintainer email |
+
+| Secret | Description |
+|--------|-------------|
+| `AUR_SSH_PRIVATE_KEY` | SSH private key for AUR push (required) |
+
 ## Usage
 
 Pin by tag (e.g. `@v1`) for stability. Releases use semver tags.

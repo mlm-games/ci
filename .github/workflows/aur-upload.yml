@@ -1,0 +1,142 @@
+name: AUR Upload
+on:
+  workflow_call:
+    inputs:
+      pkgname:
+        required: true
+        type: string
+        description: "AUR package name (e.g. ftl-csv-convert-bin)"
+      pkgdesc:
+        required: true
+        type: string
+        description: "Package description"
+      license:
+        required: false
+        type: string
+        default: "MIT OR Apache-2.0"
+      depends:
+        required: false
+        type: string
+        default: ""
+      provides:
+        required: false
+        type: string
+        default: ""
+      conflicts:
+        required: false
+        type: string
+        default: ""
+      binary-name:
+        required: true
+        type: string
+        description: "Name of the binary in the GitHub release (e.g. ftl-csv-convert-linux-x86_64)"
+      app-slug:
+        required: false
+        type: string
+        default: ""
+        description: "Installed binary name (defaults to pkgname with -bin suffix stripped)"
+      arch:
+        required: false
+        type: string
+        default: "x86_64"
+      working-directory:
+        required: false
+        type: string
+        default: "."
+      maintainer-name:
+        required: false
+        type: string
+        default: ""
+      maintainer-email:
+        required: false
+        type: string
+        default: ""
+    secrets:
+      AUR_SSH_PRIVATE_KEY:
+        required: true
+
+jobs:
+  update-aur:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Get version
+        id: version
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${{ github.event.release.tag_name }}"
+          else
+            VERSION=$(curl -sf "https://api.github.com/repos/${{ github.repository }}/releases/latest" | jq -r '.tag_name')
+          fi
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download binary and compute hash
+        id: hash
+        run: |
+          set -euo pipefail
+          BIN="${{ inputs.binary-name }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          wget -O "$BIN" "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/${BIN}"
+          HASH=$(sha256sum "$BIN" | cut -d' ' -f1)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Generate PKGBUILD
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          BIN="${{ inputs.binary-name }}"
+          HASH="${{ steps.hash.outputs.hash }}"
+          PKGNAME="${{ inputs.pkgname }}"
+          PKGDESC="${{ inputs.pkgdesc }}"
+          ARCH="${{ inputs.arch }}"
+          LICENSE="${{ inputs.license }}"
+          DEPENDS="${{ inputs.depends }}"
+          PROVIDES="${{ inputs.provides }}"
+          CONFLICTS="${{ inputs.conflicts }}"
+          MNAME="${{ inputs.maintainer-name }}"
+          MEMAIL="${{ inputs.maintainer-email }}"
+          REPO="${{ github.repository }}"
+          SLUG="${{ inputs.app-slug }}"
+          if [[ -z "${SLUG}" ]]; then
+            SLUG="${PKGNAME}"
+            SLUG="${SLUG%-bin}"
+          fi
+
+          cat > PKGBUILD << PKGEOF
+          # Maintainer: ${MNAME} <${MEMAIL}>
+          pkgname=${PKGNAME}
+          pkgver=${VERSION}
+          pkgrel=1
+          pkgdesc='${PKGDESC}'
+          arch=('${ARCH}')
+          url="https://github.com/${REPO}"
+          license=('${LICENSE}')
+          depends=(${DEPENDS})
+          provides=(${PROVIDES})
+          conflicts=(${CONFLICTS})
+          source=("\${pkgname}-\${pkgver}::https://github.com/${REPO}/releases/download/v\${pkgver}/${BIN}")
+          sha256sums=('${HASH}')
+
+          package() {
+            install -Dm755 "\${srcdir}/\${pkgname}-\${pkgver}" "\${pkgdir}/usr/bin/${SLUG}"
+          }
+          PKGEOF
+
+          echo "Generated PKGBUILD:"
+          cat PKGBUILD
+
+      - name: Publish to AUR
+        uses: mlm-games/aur-deploy-action@master
+        with:
+          pkgbuild: ./PKGBUILD
+          auto_pkgrel: true
+          commit_username: ${{ inputs.maintainer-name || 'github-actions[bot]' }}
+          commit_email: ${{ inputs.maintainer-email || 'github-actions[bot]@users.noreply.github.com' }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to v${{ steps.version.outputs.version }}"
