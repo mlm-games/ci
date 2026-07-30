@@ -39,6 +39,11 @@ on:
         required: false
         type: string
         default: "x86_64"
+      version:
+        required: false
+        type: string
+        default: ""
+        description: "Release version (eg: 1.2.3). If empty, fetches latest from GH Releases"
       working-directory:
         required: false
         type: string
@@ -68,9 +73,8 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            VERSION="${{ github.event.release.tag_name }}"
-          else
+          VERSION="${{ inputs.version }}"
+          if [[ -z "${VERSION}" ]]; then
             VERSION=$(curl -sf "https://api.github.com/repos/${{ github.repository }}/releases/latest" | jq -r '.tag_name')
           fi
           VERSION="${VERSION#v}"

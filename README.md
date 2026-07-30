@@ -89,6 +89,7 @@ jobs:
 | `depends` | `""` | Space-separated AUR dependencies |
 | `provides` | `""` | Space-separated provides |
 | `conflicts` | `""` | Space-separated conflicts |
+| `version` | `""` (latest release) | Version to publish |
 | `arch` | `x86_64` | Package architecture |
 | `maintainer-name` | `""` | AUR maintainer name |
 | `maintainer-email` | `""` | AUR maintainer email |
