@@ -93,6 +93,37 @@ on:
         required: false
         type: boolean
         default: false
+      generate-release-notes:
+        required: false
+        type: boolean
+        default: true
+      changelog-path:
+        required: false
+        type: string
+        default: "CHANGELOG.md"
+      version-file-path:
+        required: false
+        type: string
+        default: ""
+        description: "Fastlane changelog file path (uses version-code)"
+      metainfo-path:
+        required: false
+        type: string
+        default: ""
+        description: "Flathub metainfo.xml path"
+      notes-format:
+        required: false
+        type: string
+        default: "- {{subject}}"
+      notes-exclude-patterns:
+        required: false
+        type: string
+        default: "chore:,ci:,docs:,build:,Bump version,Merge pull request,[skip ci]"
+      dispatch-on-release:
+        required: false
+        type: string
+        default: "[]"
+        description: "JSON array of workflow file names to dispatch after release, with version_name input"
 
     secrets:
       ANDROID_KEYSTORE_JKS_B64:
@@ -127,14 +158,23 @@ jobs:
     permissions:
       contents: write
     outputs:
-      version_name: ${{ steps.bump.outputs.version_name || '' }}
-      version_code: ${{ steps.bump.outputs.version_code || '0' }}
+      version_name: ${{ steps.resolve.outputs.version_name }}
+      version_code: ${{ steps.resolve.outputs.version_code }}
       bumped: ${{ steps.bump.outputs.bumped || 'false' }}
-      commit_sha: ${{ steps.commit.outputs.commit_sha || '' }}
+      commit_sha: ${{ steps.resolve.outputs.commit_sha }}
+      release_notes: ${{ steps.notes.outputs.release-notes }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Read current version
+        id: read
+        shell: bash
+        run: |
+          set -euo pipefail
+          OLD_VERSION=$(grep -m1 '^version\s*=\s*"' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$OLD_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Bump Cargo version
         id: bump
@@ -142,7 +182,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          OLD_VERSION=$(grep -m1 '^version\s*=\s*"' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          OLD_VERSION=${{ steps.read.outputs.version }}
           IFS='.' read -r MAJ MIN PAT <<<"$OLD_VERSION"; : "${MAJ:=0}" "${MIN:=0}" "${PAT:=0}"
           case "${{ inputs.bump-type }}" in
             major) MAJ=$((MAJ+1)); MIN=0; PAT=0 ;;
@@ -173,6 +213,55 @@ jobs:
           git tag -a "v${{ steps.bump.outputs.version_name }}" -m "Release v${{ steps.bump.outputs.version_name }}"
           git push && git push --tags
           echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve version metadata
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.bump.outputs.bumped }}" == "true" ]]; then
+            echo "version_name=${{ steps.bump.outputs.version_name }}" >> "$GITHUB_OUTPUT"
+            echo "version_code=${{ steps.bump.outputs.version_code }}" >> "$GITHUB_OUTPUT"
+            echo "commit_sha=${{ steps.commit.outputs.commit_sha }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            REF_NAME="${{ github.ref_name }}"
+            VN="${REF_NAME#v}"
+            echo "version_name=$VN" >> "$GITHUB_OUTPUT"
+            IFS='.' read -r NMAJ NMIN NPAT <<<"$VN"; : "${NMAJ:=0}" "${NMIN:=0}" "${NPAT:=0}"
+            echo "version_code=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))" >> "$GITHUB_OUTPUT"
+            echo "commit_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            VN=${{ steps.read.outputs.version }}
+            echo "version_name=$VN" >> "$GITHUB_OUTPUT"
+            IFS='.' read -r NMAJ NMIN NPAT <<<"$VN"; : "${NMAJ:=0}" "${NMIN:=0}" "${NPAT:=0}"
+            echo "version_code=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))" >> "$GITHUB_OUTPUT"
+            echo "commit_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare notes paths
+        id: notes-paths
+        shell: bash
+        run: |
+          VFP="${{ inputs.version-file-path }}"
+          if [[ -n "$VFP" ]]; then
+            VFP="${VFP//\{\{version_code\}\}/${{ steps.resolve.outputs.version_code }}}"
+          fi
+          echo "version-file-path=$VFP" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        id: notes
+        if: inputs.generate-release-notes
+        uses: mlm-games/release-notes-generator@main
+        with:
+          version: ${{ steps.resolve.outputs.version_name }}
+          head-ref: ${{ steps.resolve.outputs.commit_sha }}
+          changelog-path: ${{ inputs.changelog-path }}
+          version-file-path: ${{ steps.notes-paths.outputs.version-file-path }}
+          version-code: ${{ steps.resolve.outputs.version_code }}
+          metainfo-path: ${{ inputs.metainfo-path }}
+          format: ${{ inputs.notes-format }}
+          exclude-patterns: ${{ inputs.notes-exclude-patterns }}
+          auto-commit: "false"
 
   build-desktop:
     name: Build and package (${{ matrix.os }})
@@ -555,17 +644,45 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ needs.prepare-version.outputs.bumped == 'true' && format('v{0}', needs.prepare-version.outputs.version_name) || github.ref_name }}
-          name: ${{ needs.prepare-version.outputs.bumped == 'true' && format('v{0}', needs.prepare-version.outputs.version_name) || github.ref_name }}
-          target_commitish: ${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.commit_sha || github.sha }}
-          generate_release_notes: true
+          tag_name: ${{ format('v{0}', needs.prepare-version.outputs.version_name) }}
+          name: ${{ inputs.app-name || 'Release' }} ${{ needs.prepare-version.outputs.version_name }}
+          target_commitish: ${{ needs.prepare-version.outputs.commit_sha }}
+          generate_release_notes: ${{ !inputs.generate-release-notes }}
           prerelease: ${{ inputs.prerelease }}
+          body: ${{ inputs.generate-release-notes && needs.prepare-version.outputs.release_notes || '' }}
           files: |
             dist/**/*.tar.gz
             dist/**/*.zip
             dist/**/*.apk
             dist/**/*.aab
             dist/SHA256SUMS.txt
+
+  dispatch-on-release:
+    if: ${{ inputs.dispatch-on-release != '[]' && !cancelled() }}
+    needs:
+      - prepare-version
+      - release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch workflows
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const workflows = JSON.parse('${{ inputs.dispatch-on-release }}');
+            const version = '${{ needs.prepare-version.outputs.version_name }}';
+            const ref = '${{ github.ref_name }}';
+            for (const wf of workflows) {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: wf,
+                ref: ref,
+                inputs: { version_name: version }
+              });
+              core.info(`Dispatched ${wf} for v${version}`);
+            }
+
 
   publish-itch:
     if: ${{ inputs.itch-username != '' && inputs.itch-game != '' && !cancelled() }}
