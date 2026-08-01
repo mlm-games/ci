@@ -14,6 +14,16 @@ on:
         required: false
         type: string
         default: ""
+      bin-name:
+        required: false
+        type: string
+        default: ""
+        description: "Source binary name in target/release (defaults to app-slug). Output binary is always app-slug."
+      cargo-build-args:
+        required: false
+        type: string
+        default: ""
+        description: "Extra args for cargo build, e.g. '-p app_shell'"
       system-deps-linux:
         required: false
         type: string
@@ -22,6 +32,11 @@ on:
         required: false
         type: string
         default: ""
+      os-matrix:
+        required: false
+        type: string
+        default: '["ubuntu-latest","ubuntu-26.04-arm","macos-latest","windows-latest"]'
+        description: "JSON array of runner OS labels"
       bump-type:
         required: false
         type: string
@@ -74,6 +89,10 @@ on:
         required: false
         type: string
         default: ""
+      prerelease:
+        required: false
+        type: boolean
+        default: false
 
     secrets:
       ANDROID_KEYSTORE_JKS_B64:
@@ -161,10 +180,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        os: ${{ fromJson(inputs.os-matrix) }}
         include:
-          - os: ubuntu-latest
-          - os: ubuntu-26.04-arm
-          - os: macos-latest
           - os: windows-latest
             rust-target: x86_64-pc-windows-gnu
     runs-on: ${{ matrix.os }}
@@ -230,21 +247,22 @@ jobs:
           echo "target=$T" >> "$GITHUB_OUTPUT"
 
       - name: Build (release)
-        run: cargo build --release --locked --target ${{ steps.triple.outputs.target }} ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+        run: cargo build --release --locked --target ${{ steps.triple.outputs.target }} ${{ inputs.cargo-build-args }} ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
 
       - name: Package (tar.gz) [Linux/macOS]
         if: runner.os != 'Windows'
         shell: bash
         env:
           TARGET: ${{ steps.triple.outputs.target }}
-          BIN: ${{ inputs.app-slug }}
+          BIN: ${{ inputs.bin-name || inputs.app-slug }}
+          OUT: ${{ inputs.app-slug }}
         run: |
           set -euxo pipefail
           VER="${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}"
           VER="${VER#v}"
-          OUTDIR="dist/${BIN}-${VER}-${TARGET}"
+          OUTDIR="dist/${OUT}-${VER}-${TARGET}"
           mkdir -p "$OUTDIR"
-          cp "target/${TARGET}/release/${BIN}" "$OUTDIR/${BIN}" 2>/dev/null || cp "target/${TARGET}/release/${BIN}.exe" "$OUTDIR/${BIN}.exe" 2>/dev/null || true
+          cp "target/${TARGET}/release/${BIN}" "$OUTDIR/${OUT}" 2>/dev/null || cp "target/${TARGET}/release/${BIN}.exe" "$OUTDIR/${OUT}.exe" 2>/dev/null || true
           for f in README* LICENSE* CHANGELOG*; do [ -e "$f" ] && cp "$f" "$OUTDIR/" || true; done
           tar -C "dist" -czf "${OUTDIR}.tar.gz" "$(basename "$OUTDIR")"
 
@@ -253,15 +271,16 @@ jobs:
         shell: pwsh
         env:
           TARGET: ${{ steps.triple.outputs.target }}
-          BIN: ${{ inputs.app-slug }}
+          BIN: ${{ inputs.bin-name || inputs.app-slug }}
+          OUT: ${{ inputs.app-slug }}
         run: |
           $ErrorActionPreference = "Stop"
           $ver = "${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}" -replace '^v',''
           $tgt = $env:TARGET
           $bin = $env:BIN
-          $out = "dist/$bin-$ver-$tgt"
+          $out = "dist/$env:OUT-$ver-$tgt"
           New-Item -ItemType Directory -Path $out -Force | Out-Null
-          Copy-Item "target\$tgt\release\$bin.exe" "$out\$bin.exe" -ErrorAction SilentlyContinue
+          Copy-Item "target\$tgt\release\$bin.exe" "$out\$env:OUT.exe" -ErrorAction SilentlyContinue
           foreach ($f in @("README*", "LICENSE*", "CHANGELOG*")) {
             Get-ChildItem $f -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName "$out\" }
           }
@@ -516,6 +535,8 @@ jobs:
     needs:
       - prepare-version
       - build-desktop
+      - build-android
+      - build-web
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -538,6 +559,7 @@ jobs:
           name: ${{ needs.prepare-version.outputs.bumped == 'true' && format('v{0}', needs.prepare-version.outputs.version_name) || github.ref_name }}
           target_commitish: ${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.commit_sha || github.sha }}
           generate_release_notes: true
+          prerelease: ${{ inputs.prerelease }}
           files: |
             dist/**/*.tar.gz
             dist/**/*.zip
