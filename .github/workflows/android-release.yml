@@ -65,6 +65,7 @@ jobs:
     outputs:
       version_name: ${{ steps.bump.outputs.version_name || steps.version.outputs.version_name }}
       version_code: ${{ steps.bump.outputs.version_code || steps.version.outputs.version_code }}
+      commit_sha: ${{ steps.bump.outputs.commit_sha || github.sha }}
     steps:
       - uses: actions/checkout@v7
 
@@ -101,6 +102,7 @@ jobs:
           git add .
           git commit -m "chore: bump version to $NEW_VERSION_NAME [skip ci]" || echo "No changes to commit"
           git push
+          echo "commit_sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
   build-and-release:
     needs: prepare-version
@@ -109,6 +111,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-version.outputs.commit_sha }}
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -196,5 +200,6 @@ jobs:
           files: artifacts/*
           name: ${{ inputs.app-name }} ${{ needs.prepare-version.outputs.version_name }}
           tag_name: ${{ needs.prepare-version.outputs.version_name }}
+          target_commitish: ${{ needs.prepare-version.outputs.commit_sha }}
           prerelease: ${{ inputs.prerelease }}
           body_path: ./fastlane/metadata/android/en-US/changelogs/${{ needs.prepare-version.outputs.version_code }}.txt
