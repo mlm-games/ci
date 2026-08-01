@@ -161,7 +161,7 @@ jobs:
       version_name: ${{ steps.resolve.outputs.version_name }}
       version_code: ${{ steps.resolve.outputs.version_code }}
       bumped: ${{ steps.bump.outputs.bumped || 'false' }}
-      commit_sha: ${{ steps.resolve.outputs.commit_sha }}
+      commit_sha: ${{ steps.commit.outputs.commit_sha || steps.resolve.outputs.commit_sha }}
       release_notes: ${{ steps.notes.outputs.release-notes }}
     steps:
       - uses: actions/checkout@v7
@@ -200,43 +200,27 @@ jobs:
           echo "version_name=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
 
-      - name: Commit and tag
-        id: commit
-        if: steps.bump.outputs.bumped == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add Cargo.toml Cargo.lock 2>/dev/null || true
-          git commit -m "chore: bump to v${{ steps.bump.outputs.version_name }} [skip ci]" || true
-          git tag -a "v${{ steps.bump.outputs.version_name }}" -m "Release v${{ steps.bump.outputs.version_name }}"
-          git push && git push --tags
-          echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
       - name: Resolve version metadata
         id: resolve
         shell: bash
         run: |
           set -euo pipefail
           if [[ "${{ steps.bump.outputs.bumped }}" == "true" ]]; then
-            echo "version_name=${{ steps.bump.outputs.version_name }}" >> "$GITHUB_OUTPUT"
-            echo "version_code=${{ steps.bump.outputs.version_code }}" >> "$GITHUB_OUTPUT"
-            echo "commit_sha=${{ steps.commit.outputs.commit_sha }}" >> "$GITHUB_OUTPUT"
+            VN="${{ steps.bump.outputs.version_name }}"
+            VC="${{ steps.bump.outputs.version_code }}"
           elif [[ "${{ github.event_name }}" == "push" ]]; then
             REF_NAME="${{ github.ref_name }}"
             VN="${REF_NAME#v}"
-            echo "version_name=$VN" >> "$GITHUB_OUTPUT"
             IFS='.' read -r NMAJ NMIN NPAT <<<"$VN"; : "${NMAJ:=0}" "${NMIN:=0}" "${NPAT:=0}"
-            echo "version_code=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))" >> "$GITHUB_OUTPUT"
-            echo "commit_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            VC=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
           else
-            VN=${{ steps.read.outputs.version }}
-            echo "version_name=$VN" >> "$GITHUB_OUTPUT"
+            VN="${{ steps.read.outputs.version }}"
             IFS='.' read -r NMAJ NMIN NPAT <<<"$VN"; : "${NMAJ:=0}" "${NMIN:=0}" "${NPAT:=0}"
-            echo "version_code=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))" >> "$GITHUB_OUTPUT"
-            echo "commit_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            VC=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
           fi
+          echo "version_name=$VN" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VC" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare notes paths
         id: notes-paths
@@ -262,6 +246,23 @@ jobs:
           format: ${{ inputs.notes-format }}
           exclude-patterns: ${{ inputs.notes-exclude-patterns }}
           auto-commit: "false"
+
+      - name: Commit and tag
+        id: commit
+        if: steps.bump.outputs.bumped == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add Cargo.toml Cargo.lock 2>/dev/null || true
+          if [[ -n "${{ inputs.changelog-path }}" ]]; then git add "${{ inputs.changelog-path }}" 2>/dev/null || true; fi
+          if [[ -n "${{ steps.notes-paths.outputs.version-file-path }}" ]]; then git add "${{ steps.notes-paths.outputs.version-file-path }}" 2>/dev/null || true; fi
+          if [[ -n "${{ inputs.metainfo-path }}" ]]; then git add "${{ inputs.metainfo-path }}" 2>/dev/null || true; fi
+          git commit -m "chore: bump to v${{ steps.bump.outputs.version_name }} [skip ci]" || true
+          git tag -a "v${{ steps.bump.outputs.version_name }}" -m "Release v${{ steps.bump.outputs.version_name }}"
+          git push && git push --tags
+          echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   build-desktop:
     name: Build and package (${{ matrix.os }})
