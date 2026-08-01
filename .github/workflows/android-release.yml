@@ -42,7 +42,11 @@ on:
       auto-bump-version:
         required: false
         type: boolean
-        default: false
+        default: true
+      bump-type:
+        required: false
+        type: string
+        default: "patch"
     secrets:
       KEYSTORE:
         required: true
@@ -87,9 +91,13 @@ jobs:
           NEW_VERSION_CODE=$((OLD_VERSION_CODE + 10))
 
           IFS='.' read -ra VERSION_PARTS <<< "$OLD_VERSION_NAME"
-          MINOR=$((VERSION_PARTS[2] + 1))
-          VERSION_PARTS[2]=$MINOR
-          NEW_VERSION_NAME="${VERSION_PARTS[0]}.${VERSION_PARTS[1]}.${VERSION_PARTS[2]}"
+          MAJOR="${VERSION_PARTS[0]}"; MINOR="${VERSION_PARTS[1]}"; PATCH="${VERSION_PARTS[2]}"
+          case "${{ inputs.bump-type }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          NEW_VERSION_NAME="${MAJOR}.${MINOR}.${PATCH}"
 
           echo "version_name=$NEW_VERSION_NAME" >> $GITHUB_OUTPUT
           echo "version_code=$NEW_VERSION_CODE" >> $GITHUB_OUTPUT
