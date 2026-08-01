@@ -39,10 +39,6 @@ on:
         required: false
         type: boolean
         default: true
-      auto-bump-version:
-        required: false
-        type: boolean
-        default: true
       bump-type:
         required: false
         type: string
@@ -82,35 +78,43 @@ jobs:
           echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
 
       - name: Bump version
-        if: inputs.auto-bump-version
         id: bump
         run: |
           OLD_VERSION_CODE=$(grep "versionCode" ${{ inputs.build-gradle-path }} | head -1 | grep -oE '[0-9]+')
           OLD_VERSION_NAME=$(grep "versionName" ${{ inputs.build-gradle-path }} | head -1 | grep -oE '"([^"]+)"' | tr -d '"')
 
-          NEW_VERSION_CODE=$((OLD_VERSION_CODE + 10))
-
-          IFS='.' read -ra VERSION_PARTS <<< "$OLD_VERSION_NAME"
-          MAJOR="${VERSION_PARTS[0]}"; MINOR="${VERSION_PARTS[1]}"; PATCH="${VERSION_PARTS[2]}"
           case "${{ inputs.bump-type }}" in
-            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH + 1)) ;;
+            major|minor|patch)
+              NEW_VERSION_CODE=$((OLD_VERSION_CODE + 10))
+              IFS='.' read -ra VERSION_PARTS <<< "$OLD_VERSION_NAME"
+              MAJOR="${VERSION_PARTS[0]}"; MINOR="${VERSION_PARTS[1]}"; PATCH="${VERSION_PARTS[2]}"
+              case "${{ inputs.bump-type }}" in
+                major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+                minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+                patch) PATCH=$((PATCH + 1)) ;;
+              esac
+              NEW_VERSION_NAME="${MAJOR}.${MINOR}.${PATCH}"
+
+              sed -i -E "s/versionCode\s*[= ]\s*$OLD_VERSION_CODE/versionCode = $NEW_VERSION_CODE/" ${{ inputs.build-gradle-path }}
+              sed -i -E "s/versionName\s*[= ]\s*\"$OLD_VERSION_NAME\"/versionName = \"$NEW_VERSION_NAME\"/" ${{ inputs.build-gradle-path }}
+
+              git config --global user.email "github-actions[bot]@users.noreply.github.com"
+              git config --global user.name "github-actions[bot]"
+              git add .
+              git commit -m "chore: bump version to $NEW_VERSION_NAME [skip ci]" || echo "No changes to commit"
+              git push
+              COMMIT_SHA=$(git rev-parse HEAD)
+              ;;
+            *)
+              NEW_VERSION_CODE=$OLD_VERSION_CODE
+              NEW_VERSION_NAME=$OLD_VERSION_NAME
+              COMMIT_SHA=${{ github.sha }}
+              ;;
           esac
-          NEW_VERSION_NAME="${MAJOR}.${MINOR}.${PATCH}"
 
           echo "version_name=$NEW_VERSION_NAME" >> $GITHUB_OUTPUT
           echo "version_code=$NEW_VERSION_CODE" >> $GITHUB_OUTPUT
-
-          sed -i -E "s/versionCode\s*[= ]\s*$OLD_VERSION_CODE/versionCode = $NEW_VERSION_CODE/" ${{ inputs.build-gradle-path }}
-          sed -i -E "s/versionName\s*[= ]\s*\"$OLD_VERSION_NAME\"/versionName = \"$NEW_VERSION_NAME\"/" ${{ inputs.build-gradle-path }}
-
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
-          git add .
-          git commit -m "chore: bump version to $NEW_VERSION_NAME [skip ci]" || echo "No changes to commit"
-          git push
-          echo "commit_sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
 
   build-and-release:
     needs: prepare-version
