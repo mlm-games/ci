@@ -38,6 +38,11 @@ on:
         required: false
         type: string
         default: ""
+      dispatch-on-release:
+        required: false
+        type: string
+        default: "[]"
+        description: "JSON array of workflow file names to dispatch after publish, with version_name input"
     secrets:
       CARGO_REGISTRY_TOKEN:
         required: false
@@ -213,3 +218,28 @@ jobs:
           files: |
             dist/*.crate
             dist/SHA256SUMS.txt
+
+  dispatch-on-release:
+    if: ${{ inputs.dispatch-on-release != '[]' && !cancelled() }}
+    needs:
+      - version
+      - publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const workflows = JSON.parse('${{ inputs.dispatch-on-release }}');
+            const version = '${{ needs.version.outputs.version }}';
+            const ref = '${{ github.ref_name }}';
+            for (const wf of workflows) {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: wf,
+                ref: ref,
+                inputs: { version_name: version }
+              });
+              core.info(`Dispatched ${wf} for v${version}`);
+            }
