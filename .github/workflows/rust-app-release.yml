@@ -41,6 +41,11 @@ on:
         required: false
         type: string
         default: "patch"
+      write-android-version-code:
+        description: "Write version_code into [package.metadata.android.sdk] in Cargo.toml on bump"
+        required: false
+        type: boolean
+        default: true
       include-android:
         required: false
         type: boolean
@@ -195,6 +200,21 @@ jobs:
           VERSION_CODE=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
 
           sed -i "s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
+          if [[ "${{ inputs.write-android-version-code }}" == "true" ]]; then
+            if grep -q '^\[package\.metadata\.android\.sdk\]' Cargo.toml; then
+              if grep -q '^version_code\s*=' Cargo.toml; then
+                sed -i -E "0,/^version_code\s*=.*/s//version_code = $VERSION_CODE/" Cargo.toml
+              else
+                awk -v vc="$VERSION_CODE" '
+                  BEGIN{printed=0}
+                  {print}
+                  /^\[package\.metadata\.android\.sdk\]$/ && printed==0 {print "version_code = " vc; printed=1}
+                ' Cargo.toml > Cargo.toml.new && mv Cargo.toml.new Cargo.toml
+              fi
+            else
+              printf '\n[package.metadata.android.sdk]\nversion_code = %s\n' "$VERSION_CODE" >> Cargo.toml
+            fi
+          fi
 
           echo "bumped=true" >> "$GITHUB_OUTPUT"
           echo "version_name=$NEW_VERSION" >> "$GITHUB_OUTPUT"

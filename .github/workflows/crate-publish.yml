@@ -10,6 +10,11 @@ on:
         required: false
         type: string
         default: "patch"
+      write-android-version-code:
+        description: "Write version_code into [package.metadata.android.sdk] in Cargo.toml on bump"
+        required: false
+        type: boolean
+        default: true
       publish-crates-io:
         required: false
         type: boolean
@@ -92,6 +97,24 @@ jobs:
           # Update [workspace.dependencies] version refs for internal crates only
           find . -name Cargo.toml -exec sed -i -E "/^\[workspace\.dependencies\]/,/^\[/{/path =/ s/version = \"[0-9]+\.[0-9]+\.[0-9]+\"/version = \"$NEW_VERSION\"/g}" {} \;
           cargo update -w
+
+          if [[ "${{ inputs.write-android-version-code }}" == "true" ]]; then
+            IFS='.' read -r NMAJ NMIN NPAT <<<"$NEW_VERSION"
+            VERSION_CODE=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
+            if grep -q '^\[package\.metadata\.android\.sdk\]' Cargo.toml; then
+              if grep -q '^version_code\s*=' Cargo.toml; then
+                sed -i -E "0,/^version_code\s*=.*/s//version_code = $VERSION_CODE/" Cargo.toml
+              else
+                awk -v vc="$VERSION_CODE" '
+                  BEGIN{printed=0}
+                  {print}
+                  /^\[package\.metadata\.android\.sdk\]$/ && printed==0 {print "version_code = " vc; printed=1}
+                ' Cargo.toml > Cargo.toml.new && mv Cargo.toml.new Cargo.toml
+              fi
+            else
+              printf '\n[package.metadata.android.sdk]\nversion_code = %s\n' "$VERSION_CODE" >> Cargo.toml
+            fi
+          fi
 
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
