@@ -150,9 +150,18 @@ jobs:
         run: ./gradlew :app:bundleRelease -PenableApkSplits=false
 
       - name: Prepare AAB artifacts
+        id: aab
         run: |
           mkdir -p artifacts
-          find app/build/outputs/bundle -name "*.aab" -exec cp {} artifacts/ \;
+          AAB_PATH=$(find app/build/outputs/bundle -name "*.aab" | head -n1)
+          if [ -z "$AAB_PATH" ]; then
+            echo "::error::No AAB found under app/build/outputs/bundle"
+            find app/build/outputs -type f || true
+            exit 1
+          fi
+          cp "$AAB_PATH" "artifacts/${{ inputs.app-slug }}-${{ needs.prepare-version.outputs.version_name }}.aab"
+          echo "path=$AAB_PATH" >> "$GITHUB_OUTPUT"
+          echo "Found AAB at $AAB_PATH"
 
       - name: Upload AAB to Google Play
         if: inputs.play-track != '' && inputs.play-track != 'none'
@@ -160,7 +169,7 @@ jobs:
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: ${{ inputs.application-id }}
-          releaseFiles: app/build/outputs/bundle/${{ inputs.play-flavor }}Release/app-release.aab
+          releaseFiles: ${{ steps.aab.outputs.path }}
           track: ${{ inputs.play-track }}
           status: completed
           whatsNewDirectory: fastlane/metadata/android
