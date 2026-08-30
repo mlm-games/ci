@@ -45,15 +45,15 @@ on:
       android-api:
         required: false
         type: string
-        default: "36"
+        default: "37.0"
       android-build-tools:
         required: false
         type: string
-        default: "36.0.0"
+        default: "37.0.0"
       android-ndk-version:
         required: false
         type: string
-        default: "28.2.13676358"
+        default: "29.0.14206865"
       java-version:
         required: false
         type: string
@@ -77,7 +77,7 @@ on:
       cargo-rapk-version:
         required: false
         type: string
-        default: "0.18.3"
+        default: "0.19.5"
 jobs:
   desktop:
     name: ${{ inputs.run-test && 'Build & test' || 'Build' }} (${{ matrix.os }})
