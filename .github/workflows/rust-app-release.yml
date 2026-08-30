@@ -574,7 +574,7 @@ jobs:
         run: |
           set -euo pipefail
           export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
-          cargo rapk build --release --universal --format aab --lib --unsigned
+          cargo rapk build --release --deterministic --universal --format aab --lib --unsigned
           SLUG="${{ inputs.app-slug }}"
           VER="${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}"
           VER="${VER#v}"
@@ -586,7 +586,7 @@ jobs:
         run: |
           set -euo pipefail
           export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
-          cargo rapk build --release --universal --lib --unsigned
+          cargo rapk build --release --deterministic --universal --lib --unsigned
           SLUG="${{ inputs.app-slug }}"
           VER="${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}"
           VER="${VER#v}"
