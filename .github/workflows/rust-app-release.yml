@@ -500,7 +500,7 @@ jobs:
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
           export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
           export ANDROID_BUILD_TOOLS="${{ inputs.android-build-tools }}"
-          cargo rapk build --release --deterministic --target ${{ matrix.target }} --lib ${unsigned:+--unsigned}
+          cargo rapk build --release --deterministic --timestamp 0 --target ${{ matrix.target }} --lib ${unsigned:+--unsigned}
           OUT_DIR="target/release/apk"
           if [ -d "target/${{ matrix.target }}/release/apk" ]; then
             OUT_DIR="target/${{ matrix.target }}/release/apk"
@@ -574,7 +574,7 @@ jobs:
         run: |
           set -euo pipefail
           export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
-          cargo rapk build --release --deterministic --universal --format aab --lib --unsigned
+          cargo rapk build --release --deterministic --timestamp 0 --universal --format aab --lib --unsigned
           SLUG="${{ inputs.app-slug }}"
           VER="${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}"
           VER="${VER#v}"
@@ -586,7 +586,7 @@ jobs:
         run: |
           set -euo pipefail
           export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
-          cargo rapk build --release --deterministic --universal --lib --unsigned
+          cargo rapk build --release --deterministic --timestamp 0 --universal --lib --unsigned
           SLUG="${{ inputs.app-slug }}"
           VER="${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}"
           VER="${VER#v}"
