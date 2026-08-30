@@ -65,7 +65,7 @@ on:
       android-d8-version:
         required: false
         type: string
-        default: "8.10.9-dev"
+        default: ""
       android-ndk-version:
         required: false
         type: string
