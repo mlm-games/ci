@@ -451,6 +451,7 @@ jobs:
         run: cargo install cargo-rapk@${{ inputs.cargo-rapk-version }} --locked
 
       - name: Download pinned D8 jar
+        if: inputs.android-d8-version != ''
         shell: bash
         run: |
           set -euo pipefail
@@ -561,6 +562,7 @@ jobs:
         run: cargo install cargo-rapk@${{ inputs.cargo-rapk-version }} --locked
 
       - name: Download D8 jar
+        if: inputs.android-d8-version != ''
         shell: bash
         run: |
           curl -fsSL -o "$RUNNER_TEMP/d8.jar" \
