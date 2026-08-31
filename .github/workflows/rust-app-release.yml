@@ -671,7 +671,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ format('v{0}', needs.prepare-version.outputs.version_name) }}
-          name: ${{ inputs.app-name || 'Release' }} ${{ needs.prepare-version.outputs.version_name }}
+          name: v${{ needs.prepare-version.outputs.version_name }}
           target_commitish: ${{ needs.prepare-version.outputs.commit_sha }}
           generate_release_notes: ${{ !inputs.generate-release-notes }}
           prerelease: ${{ inputs.prerelease }}
