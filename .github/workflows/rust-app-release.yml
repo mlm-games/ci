@@ -469,6 +469,7 @@ jobs:
           KVER="${{ inputs.kotlin-version }}"
           echo "Installing Kotlin $KVER for cargo-rapk java_sources"
           # rndk checks which kotlinc -> KOTLIN_COMPILER -> cache; install to cache for reproducibility
+          # Do NOT set KOTLIN_COMPILER env to path (kotlinc script uses it as Java class name) — just add to PATH
           CACHE_DIR="$HOME/.cache/cargo-rapk/kotlin"
           if [ -x "$CACHE_DIR/kotlinc/bin/kotlinc" ]; then
             INSTALLED=$("$CACHE_DIR/kotlinc/bin/kotlinc" -version 2>&1 | head -1)
@@ -479,8 +480,7 @@ jobs:
             unzip -q /tmp/kotlin.zip -d "$CACHE_DIR"
             rm /tmp/kotlin.zip
           fi
-          echo "KOTLIN_COMPILER=$CACHE_DIR/kotlinc/bin/kotlinc" >> "$GITHUB_ENV"
-          # also ensure kotlinc on PATH for which fallback and stdlib discovery
+          # ensure kotlinc on PATH for rndk which/ cache fallback and stdlib discovery
           echo "$CACHE_DIR/kotlinc/bin" >> "$GITHUB_PATH"
           "$CACHE_DIR/kotlinc/bin/kotlinc" -version
           ls -l "$CACHE_DIR/kotlinc/lib/kotlin-stdlib.jar"
@@ -613,7 +613,6 @@ jobs:
             unzip -q /tmp/kotlin.zip -d "$CACHE_DIR"
             rm /tmp/kotlin.zip
           fi
-          echo "KOTLIN_COMPILER=$CACHE_DIR/kotlinc/bin/kotlinc" >> "$GITHUB_ENV"
           echo "$CACHE_DIR/kotlinc/bin" >> "$GITHUB_PATH"
           "$CACHE_DIR/kotlinc/bin/kotlinc" -version
           ls -l "$CACHE_DIR/kotlinc/lib/kotlin-stdlib.jar"
