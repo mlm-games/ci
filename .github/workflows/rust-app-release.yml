@@ -75,6 +75,11 @@ on:
         required: false
         type: string
         default: "29.0.14206865"
+      kotlin-version:
+        required: false
+        type: string
+        default: "2.2.10"
+        description: "Kotlin compiler version for cargo-rapk java_sources (rlobkit-app-events). Pinned for fdroid/CI reproducibility."
       java-version:
         required: false
         type: string
@@ -456,6 +461,30 @@ jobs:
         shell: bash
         run: cargo install cargo-rapk@${{ inputs.cargo-rapk-version }} --locked
 
+      - name: Install Kotlin compiler (pinned)
+        if: inputs.kotlin-version != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          KVER="${{ inputs.kotlin-version }}"
+          echo "Installing Kotlin $KVER for cargo-rapk java_sources"
+          # rndk checks which kotlinc -> KOTLIN_COMPILER -> cache; install to cache for reproducibility
+          CACHE_DIR="$HOME/.cache/cargo-rapk/kotlin"
+          if [ -x "$CACHE_DIR/kotlinc/bin/kotlinc" ]; then
+            INSTALLED=$("$CACHE_DIR/kotlinc/bin/kotlinc" -version 2>&1 | head -1)
+            echo "Cached Kotlin: $INSTALLED"
+          else
+            mkdir -p "$CACHE_DIR"
+            curl -fsSL -o /tmp/kotlin.zip "https://github.com/JetBrains/kotlin/releases/download/v${KVER}/kotlin-compiler-${KVER}.zip"
+            unzip -q /tmp/kotlin.zip -d "$CACHE_DIR"
+            rm /tmp/kotlin.zip
+          fi
+          echo "KOTLIN_COMPILER=$CACHE_DIR/kotlinc/bin/kotlinc" >> "$GITHUB_ENV"
+          # also ensure kotlinc on PATH for which fallback and stdlib discovery
+          echo "$CACHE_DIR/kotlinc/bin" >> "$GITHUB_PATH"
+          "$CACHE_DIR/kotlinc/bin/kotlinc" -version
+          ls -l "$CACHE_DIR/kotlinc/lib/kotlin-stdlib.jar"
+
       - name: Download pinned D8 jar
         if: inputs.android-d8-version != ''
         shell: bash
@@ -566,6 +595,28 @@ jobs:
       - name: Install cargo-rapk
         shell: bash
         run: cargo install cargo-rapk@${{ inputs.cargo-rapk-version }} --locked
+
+      - name: Install Kotlin compiler (pinned)
+        if: inputs.kotlin-version != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          KVER="${{ inputs.kotlin-version }}"
+          echo "Installing Kotlin $KVER for cargo-rapk java_sources"
+          CACHE_DIR="$HOME/.cache/cargo-rapk/kotlin"
+          if [ -x "$CACHE_DIR/kotlinc/bin/kotlinc" ]; then
+            INSTALLED=$("$CACHE_DIR/kotlinc/bin/kotlinc" -version 2>&1 | head -1)
+            echo "Cached Kotlin: $INSTALLED"
+          else
+            mkdir -p "$CACHE_DIR"
+            curl -fsSL -o /tmp/kotlin.zip "https://github.com/JetBrains/kotlin/releases/download/v${KVER}/kotlin-compiler-${KVER}.zip"
+            unzip -q /tmp/kotlin.zip -d "$CACHE_DIR"
+            rm /tmp/kotlin.zip
+          fi
+          echo "KOTLIN_COMPILER=$CACHE_DIR/kotlinc/bin/kotlinc" >> "$GITHUB_ENV"
+          echo "$CACHE_DIR/kotlinc/bin" >> "$GITHUB_PATH"
+          "$CACHE_DIR/kotlinc/bin/kotlinc" -version
+          ls -l "$CACHE_DIR/kotlinc/lib/kotlin-stdlib.jar"
 
       - name: Download D8 jar
         if: inputs.android-d8-version != ''
