@@ -118,8 +118,12 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git add -A
           git commit -m "chore: bump to v$NEW_VERSION [skip ci]" || echo "No changes"
-          git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
-          git push && git push --tags
+          if [[ "${{ inputs.create-release }}" == "true" ]]; then
+            git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
+            git push && git push --tags
+          else
+            git push
+          fi
 
       - name: Validate tag matches Cargo.toml version
         run: |
