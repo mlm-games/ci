@@ -139,6 +139,16 @@ on:
         type: string
         default: "[]"
         description: "JSON array of workflow file names to dispatch after release, with version_name input"
+      play-track:
+        required: false
+        type: string
+        default: "none"
+        description: "Google Play track (none/internal/alpha/beta/production). 'none' disables Play upload."
+      play-package-name:
+        required: false
+        type: string
+        default: ""
+        description: "Package name for Play upload (defaults to Cargo.toml [package.metadata.android] package)"
 
     secrets:
       ANDROID_KEYSTORE_JKS_B64:
@@ -152,6 +162,8 @@ on:
       ANDROID_KEYSTORE_PASSWORD:
         required: false
       BUTLER_API_KEY:
+        required: false
+      PLAY_SERVICE_ACCOUNT_JSON:
         required: false
 
 permissions:
@@ -701,6 +713,7 @@ jobs:
       - prepare-version
       - build-desktop
       - build-android
+      - build-universal
       - build-web
     runs-on: ubuntu-latest
     steps:
@@ -777,3 +790,69 @@ jobs:
           game: ${{ inputs.itch-game }}
           binary: dist/
           channel: linux
+
+  publish-play:
+    if: ${{ inputs.play-track != '' && inputs.play-track != 'none' && !cancelled() }}
+    needs:
+      - prepare-version
+      - build-universal
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-version.outputs.commit_sha || github.ref_name }}
+
+      - name: Derive Play package name
+        id: pkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ inputs.play-package-name }}" ]]; then
+            echo "name=${{ inputs.play-package-name }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # try working-directory/Cargo.toml then root Cargo.toml then workspace member
+          WD="${{ inputs.working-directory }}"
+          CANDIDATES=("$WD/Cargo.toml" "Cargo.toml" "apps/renamite-editor/Cargo.toml")
+          for f in "${CANDIDATES[@]}"; do
+            if [[ -f "$f" ]]; then
+              PKG=$(grep -m1 '^\s*package\s*=\s*"' "$f" | sed -E 's/.*"([^"]+)".*/\1/' || true)
+              if [[ -n "$PKG" ]]; then
+                echo "name=$PKG" >> "$GITHUB_OUTPUT"
+                echo "Derived package $PKG from $f"
+                exit 0
+              fi
+            fi
+          done
+          echo "::error::Could not derive Play package name; set play-package-name input" >&2
+          exit 1
+
+      - name: Download universal AAB
+        uses: actions/download-artifact@v8
+        with:
+          name: dist-universal
+          path: dist-play
+
+      - name: Locate AAB
+        id: aab
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAB=$(find dist-play -name "*.aab" | head -n1)
+          if [[ -z "$AAB" ]]; then
+            echo "::error::No AAB found in dist-play (need include-universal=true)" >&2
+            find dist-play -type f || true
+            exit 1
+          fi
+          echo "path=$AAB" >> "$GITHUB_OUTPUT"
+          echo "Found AAB $AAB"
+
+      - name: Upload to Google Play
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ steps.pkg.outputs.name }}
+          releaseFiles: ${{ steps.aab.outputs.path }}
+          track: ${{ inputs.play-track }}
+          status: completed
+          whatsNewDirectory: fastlane/metadata/android
