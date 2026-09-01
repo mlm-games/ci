@@ -23,6 +23,15 @@ on:
         required: false
         type: string
         default: "app/build.gradle.kts"
+      gradle-module:
+        required: false
+        type: string
+        default: "app"
+      flavors:
+        required: false
+        type: string
+        default: ""
+        description: 'JSON array of product flavors to build separately, e.g. ["GenericGeckoIncluded","FossGeckoIncluded"]. Empty builds all variants via bundleRelease/assembleRelease and collects all.'
       play-track:
         required: false
         type: string
@@ -149,11 +158,15 @@ jobs:
           echo "version_code=${{ steps.bumpcalc.outputs.version_code }}" >> $GITHUB_OUTPUT
           echo "commit_sha=${{ steps.commit.outputs.commit_sha || github.sha }}" >> $GITHUB_OUTPUT
 
-  build-and-release:
+  build:
     needs: prepare-version
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: ${{ fromJson(inputs.flavors != '' && inputs.flavors || '[""]') }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -181,24 +194,59 @@ jobs:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew :app:bundleRelease -PenableApkSplits=false
+        run: |
+          if [ "${{ matrix.flavor }}" = "" ]; then
+            ./gradlew :${{ inputs.gradle-module }}:bundleRelease -PenableApkSplits=false
+          else
+            ./gradlew :${{ inputs.gradle-module }}:bundle${{ matrix.flavor }}Release -PenableApkSplits=false
+          fi
 
       - name: Prepare AAB artifacts
         id: aab
         run: |
           mkdir -p artifacts
-          AAB_PATH=$(find app/build/outputs/bundle -name "*.aab" | head -n1)
-          if [ -z "$AAB_PATH" ]; then
-            echo "::error::No AAB found under app/build/outputs/bundle"
-            find app/build/outputs -type f || true
+          # Find all AABs produced (covers single-variant and multi-variant builds)
+          AAB_FILES=$(find ${{ inputs.gradle-module }}/build/outputs/bundle -name "*.aab" || true)
+          if [ -z "$AAB_FILES" ]; then
+            echo "::error::No AAB found under ${{ inputs.gradle-module }}/build/outputs/bundle"
+            find ${{ inputs.gradle-module }}/build/outputs -type f || true
             exit 1
           fi
-          cp "$AAB_PATH" "artifacts/${{ inputs.app-slug }}-${{ needs.prepare-version.outputs.version_name }}.aab"
-          echo "path=$AAB_PATH" >> "$GITHUB_OUTPUT"
-          echo "Found AAB at $AAB_PATH"
+          echo "$AAB_FILES"
+          if [ "${{ matrix.flavor }}" != "" ]; then
+            # Matrix mode: one flavor per job, name with flavor
+            AAB_PATH=$(echo "$AAB_FILES" | head -n1)
+            cp "$AAB_PATH" "artifacts/${{ inputs.app-slug }}-${{ needs.prepare-version.outputs.version_name }}-${{ matrix.flavor }}.aab"
+            echo "path=$AAB_PATH" >> "$GITHUB_OUTPUT"
+            echo "Prepared AAB: artifacts/${{ inputs.app-slug }}-${{ needs.prepare-version.outputs.version_name }}-${{ matrix.flavor }}.aab from $AAB_PATH"
+          else
+            # Default mode: may contain multiple flavors (bundleRelease builds all variants)
+            # Collect each AAB with flavor suffix derived from parent dir to avoid overwriting
+            # Use a file to pass first path as output
+            FIRST=""
+            echo "$AAB_FILES" | while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              dir=$(basename "$(dirname "$f")")
+              if [ "$dir" = "release" ]; then
+                dest="artifacts/${{ inputs.app-slug }}-${{ needs.prepare-version.outputs.version_name }}.aab"
+              else
+                flavor=$(echo "$dir" | sed -E 's/Release$//')
+                dest="artifacts/${{ inputs.app-slug }}-${{ needs.prepare-version.outputs.version_name }}-${flavor}.aab"
+              fi
+              echo "Copy $f -> $dest"
+              cp "$f" "$dest"
+              if [ -z "$FIRST" ]; then
+                FIRST="$f"
+              fi
+            done
+            # head -n1 for Play upload fallback
+            AAB_PATH=$(echo "$AAB_FILES" | head -n1)
+            echo "path=$AAB_PATH" >> "$GITHUB_OUTPUT"
+            ls -lh artifacts/
+          fi
 
       - name: Upload AAB to Google Play
-        if: inputs.play-track != '' && inputs.play-track != 'none'
+        if: inputs.play-track != '' && inputs.play-track != 'none' && (inputs.play-flavor == '' || inputs.play-flavor == matrix.flavor)
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
@@ -217,17 +265,75 @@ jobs:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew :app:assembleRelease -PenableApkSplits=true -PincludeUniversalApk=true
+        run: |
+          if [ "${{ matrix.flavor }}" = "" ]; then
+            ./gradlew :${{ inputs.gradle-module }}:assembleRelease -PenableApkSplits=true -PincludeUniversalApk=true
+          else
+            ./gradlew :${{ inputs.gradle-module }}:assemble${{ matrix.flavor }}Release -PenableApkSplits=true -PincludeUniversalApk=true
+          fi
 
       - name: Prepare APK artifacts
         run: |
           mkdir -p artifacts
-          find app/build/outputs/apk -name "*.apk" | while IFS= read -r apk; do
-            arch=$(echo "$apk" | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86|universal)')
-            if [ -n "$arch" ]; then
-              cp "$apk" "artifacts/${{ inputs.app-slug }}-${{ needs.prepare-version.outputs.version_name }}-${arch}.apk"
+          # Find all APKs (exclude intermediate app-*.apk without arch naming, but keep apkDist renamed ones)
+          find ${{ inputs.gradle-module }}/build/outputs/apk -name "*.apk" | while IFS= read -r apk; do
+            # only keep files that contain an arch token (apkDist produces arch in name)
+            arch=$(echo "$apk" | grep -oE '(arm64-v8a|armeabi-v7a|x86_64|x86|universal)' || true)
+            if [ -z "$arch" ]; then
+              continue
+            fi
+            # detect flavor hint from path/filename to avoid overwriting same arch across flavors
+            flavor_hint=$(echo "$apk" | grep -oiE 'GenericGeckoIncluded|GenericGeckoExcluded|FossGeckoIncluded|FossGeckoExcluded|genericGeckoIncluded|genericGeckoExcluded|fossGeckoIncluded|fossGeckoExcluded' | head -n1 || true)
+            if [ "${{ matrix.flavor }}" != "" ]; then
+              dest="artifacts/${{ inputs.app-slug }}-${{ matrix.flavor }}-${{ needs.prepare-version.outputs.version_name }}-${arch}.apk"
+              # matrix job isolates flavor, no overwrite risk, but handle universal vs arch duplicates
+              # ensure unique per arch
+              if [ -f "$dest" ]; then
+                echo "Skipping duplicate $dest for $apk"
+                continue
+              fi
+              cp "$apk" "$dest"
+              echo "Collected $apk -> $dest"
+            else
+              if [ -n "$flavor_hint" ]; then
+                dest="artifacts/${{ inputs.app-slug }}-${flavor_hint}-${{ needs.prepare-version.outputs.version_name }}-${arch}.apk"
+              else
+                dest="artifacts/${{ inputs.app-slug }}-${{ needs.prepare-version.outputs.version_name }}-${arch}.apk"
+              fi
+              if [ -f "$dest" ]; then
+                echo "Skipping duplicate $dest for $apk"
+                continue
+              fi
+              cp "$apk" "$dest"
+              echo "Collected $apk -> $dest"
             fi
           done
+          echo "Artifacts collected:"
+          ls -lh artifacts/ || true
+
+      - name: Upload artifacts (per flavor)
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ needs.prepare-version.outputs.version_name }}-${{ matrix.flavor || 'default' }}
+          path: artifacts/*
+
+  release:
+    needs: [prepare-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts from matrix
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifact directory
+        run: |
+          mkdir -p out
+          find artifacts -type f -maxdepth 5 -print -exec cp {} out/ \;
+          echo "Flattened release assets:"
+          ls -lh out/
 
       - name: Ensure changelog file for release body
         id: bodyfile
@@ -235,7 +341,6 @@ jobs:
           NOTES_FILE="fastlane/metadata/android/en-US/changelogs/${{ needs.prepare-version.outputs.version_code }}.txt"
           mkdir -p "$(dirname "$NOTES_FILE")"
           if [ ! -s "$NOTES_FILE" ]; then
-            # Prefer notes generated in prepare-version (passed via output if needed)
             if [ -n "${{ needs.prepare-version.outputs.release_notes }}" ]; then
               printf '%s\n' "${{ needs.prepare-version.outputs.release_notes }}" > "$NOTES_FILE"
             else
@@ -247,11 +352,10 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*
+          files: out/*
           name: ${{ inputs.app-name }} ${{ needs.prepare-version.outputs.version_name }}
           tag_name: ${{ needs.prepare-version.outputs.version_name }}
           target_commitish: ${{ needs.prepare-version.outputs.commit_sha }}
           prerelease: ${{ inputs.prerelease }}
           body_path: ${{ steps.bodyfile.outputs.path }}
-          # Safety net if body_path is still empty
           generate_release_notes: true
