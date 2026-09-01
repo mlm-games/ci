@@ -75,14 +75,14 @@ jobs:
       - id: read
         name: Read current version
         run: |
-          VERSION=$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[0].version')
+          VERSION=$(cargo metadata --manifest-path "${{ inputs.working-directory }}/Cargo.toml" --no-deps --format-version=1 | jq -r '.packages[0].version')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Auto bump version
         if: github.event_name == 'workflow_dispatch' && inputs.bump-type != 'none'
         id: bump
         run: |
-          OLD_VERSION=$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[0].version')
+          OLD_VERSION=$(cargo metadata --manifest-path "${{ inputs.working-directory }}/Cargo.toml" --no-deps --format-version=1 | jq -r '.packages[0].version')
           IFS='.' read -ra PARTS <<< "$OLD_VERSION"
           MAJOR="${PARTS[0]}"; MINOR="${PARTS[1]}"; PATCH="${PARTS[2]}"
           case "${{ inputs.bump-type }}" in
@@ -93,22 +93,24 @@ jobs:
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
           echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
-          find . -name Cargo.toml -exec sed -i -E "/^\[(package|workspace\.package)\]/,/^\[/ s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" {} \;
-          # Update [workspace.dependencies] version refs for internal crates only
-          find . -name Cargo.toml -exec sed -i -E "/^\[workspace\.dependencies\]/,/^\[/{/path =/ s/version = \"[0-9]+\.[0-9]+\.[0-9]+\"/version = \"$NEW_VERSION\"/g}" {} \;
-          cargo update -w
+          sed -i -E "/^\[workspace\.package\]/,/^\[/ s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" "${{ inputs.working-directory }}/Cargo.toml"
+          # Fallback: bump any [package] with literal version == OLD (excluding standalone uniffi-bindgen and target)
+          find "${{ inputs.working-directory }}" -name Cargo.toml -not -path "*/target/*" -not -path "*/uniffi-bindgen/*" -exec sed -i -E "/^\[package\]/,/^\[/ s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" {} \;
+          # Update [workspace.dependencies] version refs for internal path crates only (only in workspace root)
+          sed -i -E "/^\[workspace\.dependencies\]/,/^\[/{ /path =/ s/version = \"[0-9]+\.[0-9]+\.[0-9]+\"/version = \"$NEW_VERSION\"/g }" "${{ inputs.working-directory }}/Cargo.toml"
+          cargo update --manifest-path "${{ inputs.working-directory }}/Cargo.toml" --workspace
 
-          if [[ "${{ inputs.write-android-version-code }}" == "true" ]] && grep -q '^\[package\.metadata\.android\.sdk\]' Cargo.toml; then
+          if [[ "${{ inputs.write-android-version-code }}" == "true" ]] && grep -q '^\[package\.metadata\.android\.sdk\]' "${{ inputs.working-directory }}/Cargo.toml"; then
             IFS='.' read -r NMAJ NMIN NPAT <<<"$NEW_VERSION"
             VERSION_CODE=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
-            if grep -q '^version_code\s*=' Cargo.toml; then
-              sed -i -E "0,/^version_code\s*=.*/s//version_code = $VERSION_CODE/" Cargo.toml
+            if grep -q '^version_code\s*=' "${{ inputs.working-directory }}/Cargo.toml"; then
+              sed -i -E "0,/^version_code\s*=.*/s//version_code = $VERSION_CODE/" "${{ inputs.working-directory }}/Cargo.toml"
             else
               awk -v vc="$VERSION_CODE" '
                 BEGIN{printed=0}
                 {print}
                 /^\[package\.metadata\.android\.sdk\]$/ && printed==0 {print "version_code = " vc; printed=1}
-              ' Cargo.toml > Cargo.toml.new && mv Cargo.toml.new Cargo.toml
+              ' "${{ inputs.working-directory }}/Cargo.toml" > "${{ inputs.working-directory }}/Cargo.toml.new" && mv "${{ inputs.working-directory }}/Cargo.toml.new" "${{ inputs.working-directory }}/Cargo.toml"
             fi
           fi
 
@@ -121,7 +123,7 @@ jobs:
 
       - name: Validate tag matches Cargo.toml version
         run: |
-          VERSION=$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[0].version')
+          VERSION=$(cargo metadata --manifest-path "${{ inputs.working-directory }}/Cargo.toml" --no-deps --format-version=1 | jq -r '.packages[0].version')
           TAG="${{ steps.bump.outputs.version || steps.read.outputs.version }}"
           if [ "v$VERSION" != "v$TAG" ]; then
             echo "Version mismatch: tag v$TAG != Cargo.toml v$VERSION"
