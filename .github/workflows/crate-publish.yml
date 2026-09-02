@@ -199,17 +199,17 @@ jobs:
             done
           fi
           for i in 1 2 3; do
-            if cargo publish $PKG_FLAGS 2>&1; then exit 0; fi
-            if cargo metadata --no-deps --format-version=1 2>/dev/null | \
-               jq -e --arg ver "${{ needs.version.outputs.version }}" \
-               '.packages[0].version == $ver' > /dev/null 2>&1; then
-              echo "Version ${{ needs.version.outputs.version }} already published; skipping."
+            if cargo publish $PKG_FLAGS 2>&1 | tee /tmp/publish.log; then exit 0; fi
+            if grep -qi "already exists\|already published" /tmp/publish.log; then
+              echo "Version ${{ needs.version.outputs.version }} already published on crates.io; skipping."
               exit 0
             fi
             echo "Publish failed, retrying in $((i*10))s..." >&2
+            cat /tmp/publish.log >&2 || true
             sleep $((i*10))
           done
-          echo "Publish failed after 3 attempts"
+          echo "Publish failed after 3 attempts" >&2
+          cat /tmp/publish.log >&2 || true
           exit 1
 
   release:
