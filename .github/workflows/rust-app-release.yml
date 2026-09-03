@@ -392,8 +392,26 @@ jobs:
           VER="${VER#v}"
           OUTDIR="dist/${OUT}-${VER}-${TARGET}"
           mkdir -p "$OUTDIR"
-          cp "target/${TARGET}/release/${BIN}" "$OUTDIR/${OUT}" 2>/dev/null || cp "target/${TARGET}/release/${BIN}.exe" "$OUTDIR/${OUT}.exe" 2>/dev/null || true
-          for f in README* LICENSE* CHANGELOG*; do [ -e "$f" ] && cp "$f" "$OUTDIR/" || true; done
+          TARGET_DIR="$(cargo metadata --format-version 1 --no-deps 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("target_directory",""))' 2>/dev/null || echo "target")"
+          # try workspace root, then relative, then metadata absolute
+          if [ -f "$TARGET_DIR/${TARGET}/release/${BIN}" ]; then
+            cp "$TARGET_DIR/${TARGET}/release/${BIN}" "$OUTDIR/${OUT}"
+          elif [ -f "target/${TARGET}/release/${BIN}" ]; then
+            cp "target/${TARGET}/release/${BIN}" "$OUTDIR/${OUT}"
+          elif [ -f "../../target/${TARGET}/release/${BIN}" ]; then
+            cp "../../target/${TARGET}/release/${BIN}" "$OUTDIR/${OUT}"
+          elif [ -f "target/${TARGET}/release/${BIN}.exe" ]; then
+            cp "target/${TARGET}/release/${BIN}.exe" "$OUTDIR/${OUT}.exe"
+          elif [ -f "$TARGET_DIR/${TARGET}/release/${BIN}.exe" ]; then
+            cp "$TARGET_DIR/${TARGET}/release/${BIN}.exe" "$OUTDIR/${OUT}.exe"
+          else
+            echo "::warning::Binary not found at target/${TARGET}/release/${BIN} (checked TARGET_DIR=$TARGET_DIR)"
+            cp "target/${TARGET}/release/${BIN}" "$OUTDIR/${OUT}" 2>/dev/null || cp "target/${TARGET}/release/${BIN}.exe" "$OUTDIR/${OUT}.exe" 2>/dev/null || true
+            if [ ! -f "$OUTDIR/${OUT}" ] && [ ! -f "$OUTDIR/${OUT}.exe" ] && [ -f "$TARGET_DIR/${TARGET}/release/${BIN}" ]; then
+              cp "$TARGET_DIR/${TARGET}/release/${BIN}" "$OUTDIR/${OUT}" || true
+            fi
+          fi
+          for f in README* LICENSE* CHANGELOG*; do [ -e "$f" ] && cp "$f" "$OUTDIR/" || true; [ -e "../../$f" ] && cp "../../$f" "$OUTDIR/" || true; done
           tar -C "dist" -czf "${OUTDIR}.tar.gz" "$(basename "$OUTDIR")"
 
       - name: Package (zip) [Windows]
@@ -410,9 +428,14 @@ jobs:
           $bin = $env:BIN
           $out = "dist/$env:OUT-$ver-$tgt"
           New-Item -ItemType Directory -Path $out -Force | Out-Null
-          Copy-Item "target\$tgt\release\$bin.exe" "$out\$env:OUT.exe" -ErrorAction SilentlyContinue
+          $td = cargo metadata --format-version 1 --no-deps | python -c "import json,sys; print(json.load(sys.stdin).get('target_directory','target'))"
+          $candidates = @("target\$tgt\release\$bin.exe", "..\..\target\$tgt\release\$bin.exe", "$td\$tgt\release\$bin.exe")
+          $copied = $false
+          foreach ($c in $candidates) { if (Test-Path $c) { Copy-Item $c "$out\$env:OUT.exe"; $copied = $true; break } }
+          if (-not $copied) { Copy-Item "target\$tgt\release\$bin.exe" "$out\$env:OUT.exe" -ErrorAction SilentlyContinue }
           foreach ($f in @("README*", "LICENSE*", "CHANGELOG*")) {
             Get-ChildItem $f -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName "$out\" }
+            Get-ChildItem "..\..\\$f" -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName "$out\" }
           }
           Compress-Archive -Path "$out\*" -DestinationPath "$out.zip"
 
@@ -548,11 +571,35 @@ jobs:
           export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
           export ANDROID_BUILD_TOOLS="${{ inputs.android-build-tools }}"
           cargo rapk build --release --deterministic --timestamp 0 --target ${{ matrix.target }} --lib ${unsigned:+--unsigned}
-          OUT_DIR="target/release/apk"
-          if [ -d "target/${{ matrix.target }}/release/apk" ]; then
-            OUT_DIR="target/${{ matrix.target }}/release/apk"
+          # Robust target dir lookup: cargo metadata returns workspace root target (e.g. /home/runner/work/renamite/renamite/target)
+          # which is correct when working-directory is a workspace member (apps/renamite-editor).
+          TARGET_DIR="$(cargo metadata --format-version 1 --no-deps 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("target_directory",""))' 2>/dev/null || true)"
+          CANDIDATES=()
+          if [[ -n "$TARGET_DIR" && -d "$TARGET_DIR/release/apk" ]]; then
+            CANDIDATES+=("$TARGET_DIR/release/apk")
           fi
-          APK_SRC=$(ls -1t "$OUT_DIR"/*.apk | head -n1)
+          CANDIDATES+=("target/release/apk" "target/${{ matrix.target }}/release/apk" "../../target/release/apk" "../../target/${{ matrix.target }}/release/apk")
+          if [[ -n "$TARGET_DIR" ]]; then
+            CANDIDATES+=("$TARGET_DIR/${{ matrix.target }}/release/apk")
+          fi
+          APK_SRC=""
+          for cand in "${CANDIDATES[@]}"; do
+            if ls "$cand"/*.apk >/dev/null 2>&1; then
+              APK_SRC="$(ls -1t "$cand"/*.apk | head -n1)"
+              echo "Found APK at $APK_SRC (candidate $cand)"
+              break
+            fi
+          done
+          if [[ -z "$APK_SRC" && -n "$TARGET_DIR" ]]; then
+            APK_SRC="$(find "$TARGET_DIR" -type f -name "*.apk" | head -n1 || true)"
+          fi
+          if [[ -z "$APK_SRC" ]]; then
+            echo "::error::No APK found. Searched: ${CANDIDATES[*]}"
+            ls -R target/release/apk 2>&1 | head -n 100 || true
+            ls -R ../../target/release/apk 2>&1 | head -n 100 || true
+            if [[ -n "$TARGET_DIR" ]]; then ls -R "$TARGET_DIR/release/apk" 2>&1 | head -n 100 || true; fi
+            exit 1
+          fi
           SLUG="${{ inputs.app-slug }}"
           VER="${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}"
           VER="${VER#v}"
@@ -647,7 +694,13 @@ jobs:
           VER="${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}"
           VER="${VER#v}"
           mkdir -p dist
-          cp target/release/apk/${SLUG}.aab "dist/${SLUG}-${VER}-universal.aab"
+          TARGET_DIR="$(cargo metadata --format-version 1 --no-deps 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("target_directory",""))' 2>/dev/null || echo "target")"
+          for cand in "$TARGET_DIR/release/apk" "target/release/apk" "../../target/release/apk"; do
+            if [[ -f "$cand/${SLUG}.aab" ]]; then SRC="$cand/${SLUG}.aab"; break; fi
+          done
+          if [[ -z "${SRC:-}" ]]; then SRC="$(find "${TARGET_DIR:-target}" -name "${SLUG}.aab" | head -n1 || true)"; fi
+          if [[ -z "${SRC:-}" || ! -f "$SRC" ]]; then echo "::error::AAB not found"; find "${TARGET_DIR:-target}" -name "*.aab" 2>&1 | head -n 20; ls -R target 2>&1 | head -n 20; ls -R ../../target 2>&1 | head -n 20; exit 1; fi
+          cp "$SRC" "dist/${SLUG}-${VER}-universal.aab"
 
       - name: Build universal APK
         shell: bash
@@ -659,7 +712,13 @@ jobs:
           VER="${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}"
           VER="${VER#v}"
           mkdir -p dist
-          cp target/release/apk/${SLUG}.apk "dist/${SLUG}-${VER}-universal.apk"
+          TARGET_DIR="$(cargo metadata --format-version 1 --no-deps 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("target_directory",""))' 2>/dev/null || echo "target")"
+          for cand in "$TARGET_DIR/release/apk" "target/release/apk" "../../target/release/apk"; do
+            if [[ -f "$cand/${SLUG}.apk" ]]; then SRC="$cand/${SLUG}.apk"; break; fi
+          done
+          if [[ -z "${SRC:-}" ]]; then SRC="$(find "${TARGET_DIR:-target}" -name "${SLUG}.apk" | head -n1 || true)"; fi
+          if [[ -z "${SRC:-}" || ! -f "$SRC" ]]; then echo "::error::universal APK not found"; find "${TARGET_DIR:-target}" -name "*.apk" 2>&1 | head -n 20; ls -R target 2>&1 | head -n 20; ls -R ../../target 2>&1 | head -n 20; exit 1; fi
+          cp "$SRC" "dist/${SLUG}-${VER}-universal.apk"
 
       - name: Upload universal artifacts
         uses: actions/upload-artifact@v7
