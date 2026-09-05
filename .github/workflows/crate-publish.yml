@@ -100,18 +100,21 @@ jobs:
           sed -i -E "/^\[workspace\.dependencies\]/,/^\[/{ /path =/ s/version = \"[0-9]+\.[0-9]+\.[0-9]+\"/version = \"$NEW_VERSION\"/g }" "${{ inputs.working-directory }}/Cargo.toml"
           cargo update --manifest-path "${{ inputs.working-directory }}/Cargo.toml" --workspace
 
-          if [[ "${{ inputs.write-android-version-code }}" == "true" ]] && grep -q '^\[package\.metadata\.android\.sdk\]' "${{ inputs.working-directory }}/Cargo.toml"; then
+          if [[ "${{ inputs.write-android-version-code }}" == "true" ]]; then
             IFS='.' read -r NMAJ NMIN NPAT <<<"$NEW_VERSION"
             VERSION_CODE=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
-            if grep -q '^version_code\s*=' "${{ inputs.working-directory }}/Cargo.toml"; then
-              sed -i -E "0,/^version_code\s*=.*/s//version_code = $VERSION_CODE/" "${{ inputs.working-directory }}/Cargo.toml"
-            else
-              awk -v vc="$VERSION_CODE" '
-                BEGIN{printed=0}
-                {print}
-                /^\[package\.metadata\.android\.sdk\]$/ && printed==0 {print "version_code = " vc; printed=1}
-              ' "${{ inputs.working-directory }}/Cargo.toml" > "${{ inputs.working-directory }}/Cargo.toml.new" && mv "${{ inputs.working-directory }}/Cargo.toml.new" "${{ inputs.working-directory }}/Cargo.toml"
-            fi
+            # Root manifest plus workspace members (e.g. apps/renamite-editor/Cargo.toml)
+            while IFS= read -r MANIFEST; do
+              if grep -q '^version_code\s*=' "$MANIFEST"; then
+                sed -i -E "0,/^version_code\s*=.*/s//version_code = $VERSION_CODE/" "$MANIFEST"
+              else
+                awk -v vc="$VERSION_CODE" '
+                  BEGIN{printed=0}
+                  {print}
+                  /^\[package\.metadata\.android\.sdk\]$/ && printed==0 {print "version_code = " vc; printed=1}
+                ' "$MANIFEST" > "$MANIFEST.new" && mv "$MANIFEST.new" "$MANIFEST"
+              fi
+            done < <(grep -rl '^\[package\.metadata\.android\.sdk\]' --include=Cargo.toml "${{ inputs.working-directory }}" | grep -v '/target/')
           fi
 
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
