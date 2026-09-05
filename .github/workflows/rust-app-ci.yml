@@ -77,7 +77,7 @@ on:
       cargo-rapk-version:
         required: false
         type: string
-        default: "0.20.0"
+        default: "0.20.1"
 jobs:
   desktop:
     name: ${{ inputs.run-test && 'Build & test' || 'Build' }} (${{ matrix.os }})
