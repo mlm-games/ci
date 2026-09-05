@@ -200,7 +200,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          OLD_VERSION=$(grep -m1 '^version\s*=\s*"' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          MANIFEST="${{ inputs.working-directory }}/Cargo.toml"
+          OLD_VERSION=$(grep -m1 '^version\s*=\s*"' "$MANIFEST" 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || true)
+          if [[ -z "$OLD_VERSION" ]]; then
+            OLD_VERSION=$(grep -m1 '^version\s*=\s*"' Cargo.toml 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || true)
+          fi
+          if [[ -z "$OLD_VERSION" ]]; then
+            OLD_VERSION=$(cargo metadata --manifest-path "$MANIFEST" --no-deps --format-version=1 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["packages"][0]["version"])' || true)
+          fi
+          if [[ -z "$OLD_VERSION" ]]; then
+            echo "::error::Could not determine version from $MANIFEST or Cargo.toml" >&2
+            exit 1
+          fi
           echo "version=$OLD_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Bump Cargo version
@@ -209,6 +220,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          WD="${{ inputs.working-directory }}"
+          MANIFEST="$WD/Cargo.toml"
           OLD_VERSION=${{ steps.read.outputs.version }}
           IFS='.' read -r MAJ MIN PAT <<<"$OLD_VERSION"; : "${MAJ:=0}" "${MIN:=0}" "${PAT:=0}"
           case "${{ inputs.bump-type }}" in
@@ -221,18 +234,28 @@ jobs:
           IFS='.' read -r NMAJ NMIN NPAT <<<"$NEW_VERSION"
           VERSION_CODE=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
 
-          sed -i "s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
-          cargo update -w
-          if [[ "${{ inputs.write-android-version-code }}" == "true" ]] && grep -q '^\[package\.metadata\.android\.sdk\]' Cargo.toml; then
-            if grep -q '^version_code\s*=' Cargo.toml; then
-              sed -i -E "0,/^version_code\s*=.*/s//version_code = $VERSION_CODE/" Cargo.toml
-            else
-              awk -v vc="$VERSION_CODE" '
-                BEGIN{printed=0}
-                {print}
-                /^\[package\.metadata\.android\.sdk\]$/ && printed==0 {print "version_code = " vc; printed=1}
-              ' Cargo.toml > Cargo.toml.new && mv Cargo.toml.new Cargo.toml
-            fi
+          sed -i -E "/^\[workspace\.package\]/,/^\[/ s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" "$MANIFEST" || true
+          find "$WD" -name Cargo.toml -not -path "*/target/*" -not -path "*/uniffi-bindgen/*" -exec sed -i -E "/^\[package\]/,/^\[/ s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" {} \;
+          # Update [workspace.dependencies] version refs for internal path crates (workspace root only)
+          sed -i -E "/^\[workspace\.dependencies\]/,/^\[/{ /path =/ s/version = \"[0-9]+\.[0-9]+\.[0-9]+\"/version = \"$NEW_VERSION\"/g }" "$MANIFEST" || true
+          # Fallback for callers rooted at repo root with member under apps/: also try repo-root manifest
+          if [[ "$MANIFEST" != "Cargo.toml" && -f "Cargo.toml" ]]; then
+            sed -i -E "/^\[workspace\.package\]/,/^\[/ s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" "Cargo.toml" || true
+          fi
+          cargo update --manifest-path "$MANIFEST" --workspace
+          if [[ "${{ inputs.write-android-version-code }}" == "true" ]]; then
+            while IFS= read -r MF; do
+              [[ -n "$MF" ]] || continue
+              if grep -q '^version_code\s*=' "$MF"; then
+                sed -i -E "0,/^version_code\s*=.*/s//version_code = $VERSION_CODE/" "$MF"
+              else
+                awk -v vc="$VERSION_CODE" '
+                  BEGIN{printed=0}
+                  {print}
+                  /^\[package\.metadata\.android\.sdk\]$/ && printed==0 {print "version_code = " vc; printed=1}
+                ' "$MF" > "$MF.new" && mv "$MF.new" "$MF"
+              fi
+            done < <(grep -rl '^\[package\.metadata\.android\.sdk\]' --include=Cargo.toml "$WD" 2>/dev/null | grep -v '/target/' || true)
           fi
 
           echo "bumped=true" >> "$GITHUB_OUTPUT"
@@ -295,6 +318,7 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add Cargo.toml Cargo.lock 2>/dev/null || true
+          git add "${{ inputs.working-directory }}/Cargo.toml" "${{ inputs.working-directory }}/Cargo.lock" 2>/dev/null || true
           if [[ -n "${{ inputs.changelog-path }}" ]]; then git add "${{ inputs.changelog-path }}" 2>/dev/null || true; fi
           if [[ -n "${{ steps.notes-paths.outputs.version-file-path }}" ]]; then git add "${{ steps.notes-paths.outputs.version-file-path }}" 2>/dev/null || true; fi
           if [[ -n "${{ inputs.metainfo-path }}" ]]; then git add "${{ inputs.metainfo-path }}" 2>/dev/null || true; fi
@@ -388,7 +412,7 @@ jobs:
           OUT: ${{ inputs.app-slug }}
         run: |
           set -euxo pipefail
-          VER="${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}"
+          VER="${{ needs.prepare-version.outputs.version_name }}"
           VER="${VER#v}"
           OUTDIR="dist/${OUT}-${VER}-${TARGET}"
           mkdir -p "$OUTDIR"
@@ -423,7 +447,7 @@ jobs:
           OUT: ${{ inputs.app-slug }}
         run: |
           $ErrorActionPreference = "Stop"
-          $ver = "${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}" -replace '^v',''
+          $ver = "${{ needs.prepare-version.outputs.version_name }}" -replace '^v',''
           $tgt = $env:TARGET
           $bin = $env:BIN
           $out = "dist/$env:OUT-$ver-$tgt"
@@ -583,7 +607,7 @@ jobs:
             exit 1
           fi
           SLUG="${{ inputs.app-slug }}"
-          VER="${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}"
+          VER="${{ needs.prepare-version.outputs.version_name }}"
           VER="${VER#v}"
           mkdir -p dist
           cp "$APK_SRC" "dist/${SLUG}-${VER}-${{ matrix.abi }}.apk"
@@ -658,7 +682,7 @@ jobs:
           export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
           cargo rapk build --release --deterministic --timestamp 0 --universal --format aab --lib --unsigned
           SLUG="${{ inputs.app-slug }}"
-          VER="${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}"
+          VER="${{ needs.prepare-version.outputs.version_name }}"
           VER="${VER#v}"
           mkdir -p dist
           TARGET_DIR="$(cargo metadata --format-version 1 --no-deps 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("target_directory",""))' 2>/dev/null || echo "target")"
@@ -676,7 +700,7 @@ jobs:
           export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
           cargo rapk build --release --deterministic --timestamp 0 --universal --lib --unsigned
           SLUG="${{ inputs.app-slug }}"
-          VER="${{ needs.prepare-version.outputs.bumped == 'true' && needs.prepare-version.outputs.version_name || github.ref_name }}"
+          VER="${{ needs.prepare-version.outputs.version_name }}"
           VER="${VER#v}"
           mkdir -p dist
           TARGET_DIR="$(cargo metadata --format-version 1 --no-deps 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("target_directory",""))' 2>/dev/null || echo "target")"
