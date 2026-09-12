@@ -464,12 +464,14 @@ jobs:
           Compress-Archive -Path "$out\*" -DestinationPath "$out.zip"
 
       - name: Upload build artifacts
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: dist-desktop-${{ matrix.os }}${{ matrix.rust-target && format('-{0}', matrix.rust-target) || '' }}
           path: |
             ${{ inputs.working-directory }}/dist/**/*.tar.gz
             ${{ inputs.working-directory }}/dist/**/*.zip
+          if-no-files-found: warn
 
   build-android:
     if: inputs.include-android
@@ -613,11 +615,12 @@ jobs:
           cp "$APK_SRC" "dist/${SLUG}-${VER}-${{ matrix.abi }}.apk"
 
       - name: Upload Android artifacts
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: dist-android-${{ matrix.abi }}
           path: ${{ inputs.working-directory }}/dist/*.apk
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
   build-universal:
     if: inputs.include-universal
@@ -712,18 +715,20 @@ jobs:
           cp "$SRC" "dist/${SLUG}-${VER}-universal.apk"
 
       - name: Upload universal artifacts
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: dist-universal
           path: ${{ inputs.working-directory }}/dist/*.aab
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
       - name: Upload universal APK
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: dist-universal-apk
           path: ${{ inputs.working-directory }}/dist/*.apk
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
   build-web:
     if: inputs.include-web
@@ -752,10 +757,12 @@ jobs:
           cp target/wasm32-unknown-unknown/release/${{ inputs.app-slug }}.wasm dist/
 
       - name: Upload web artifact
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: dist-web
           path: ${{ inputs.working-directory }}/dist/*.wasm
+          if-no-files-found: warn
 
   release:
     if: ${{ always() && !cancelled() && !failure() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}

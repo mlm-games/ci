@@ -182,11 +182,12 @@ jobs:
           echo "crate_files=$(ls target/package/*.crate | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
 
       - name: Upload crate artifacts
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: crate
           path: ${{ inputs.working-directory }}/target/package/*.crate
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 1
 
       - name: Publish to crates.io

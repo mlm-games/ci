@@ -178,11 +178,12 @@ jobs:
           for f in README* LICENSE* CHANGELOG*; do [ -e "$f" ] && cp "$f" artifacts/ || true; done
 
       - name: Upload CI artifact
-        if: inputs.upload-artifacts && inputs.app-slug != ''
+        if: ${{ !cancelled() && inputs.upload-artifacts && inputs.app-slug != '' }}
         uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.os }}
           path: ${{ inputs.working-directory }}/artifacts/
+          if-no-files-found: warn
 
   android-check:
     if: inputs.include-android
@@ -246,8 +247,9 @@ jobs:
           fi
 
       - name: Upload APK artifact
-        if: inputs.upload-artifacts
+        if: ${{ !cancelled() && inputs.upload-artifacts }}
         uses: actions/upload-artifact@v7
         with:
           name: android-arm64
           path: ${{ inputs.working-directory }}/artifacts/*.apk
+          if-no-files-found: warn

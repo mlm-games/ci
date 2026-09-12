@@ -68,8 +68,9 @@ jobs:
         run: ${{ inputs.lint-command }}
 
       - name: Upload build artifacts
-        if: inputs.upload-artifact
+        if: ${{ !cancelled() && inputs.upload-artifact }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact-name }}
           path: ${{ inputs.artifact-pattern }}
+          if-no-files-found: warn

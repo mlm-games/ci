@@ -312,10 +312,12 @@ jobs:
           ls -lh artifacts/ || true
 
       - name: Upload artifacts (per flavor)
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: android-${{ needs.prepare-version.outputs.version_name }}-${{ matrix.flavor || 'default' }}
           path: artifacts/*
+          if-no-files-found: warn
 
   release:
     needs: [prepare-version, build]
