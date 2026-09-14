@@ -159,6 +159,8 @@ on:
         required: false
       ANDROID_KEY_ALIAS:
         required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
       ANDROID_KEYSTORE_PASSWORD:
         required: false
       BUTLER_API_KEY:
@@ -569,6 +571,9 @@ jobs:
           fi
           echo "CARGO_RAPK_RELEASE_KEYSTORE=$PWD/release.keystore" >> "$GITHUB_ENV"
           echo "CARGO_RAPK_RELEASE_KEYSTORE_PASSWORD=$KS_PASS" >> "$GITHUB_ENV"
+          if [[ -n "${KS_ALIAS:-}" ]]; then
+            echo "CARGO_RAPK_RELEASE_KEYSTORE_ALIAS=$KS_ALIAS" >> "$GITHUB_ENV"
+          fi
 
       - name: Build Android APK
         shell: bash
@@ -678,13 +683,53 @@ jobs:
             "https://storage.googleapis.com/r8-releases/raw/${{ inputs.android-d8-version }}/r8.jar"
           echo "ANDROID_D8_JAR=$RUNNER_TEMP/d8.jar" >> "$GITHUB_ENV"
 
+      - name: Prepare release keystore (universal)
+        shell: bash
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_JKS_B64 }}
+          KS_ASC: ${{ secrets.ANDROID_KEYSTORE_ASC }}
+          KS_PASSPHRASE: ${{ secrets.ANDROID_KEYSTORE_PASSPHRASE }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${KS_B64:-}" && -z "${KS_ASC:-}" ]]; then
+            echo "unsigned=true" >> "$GITHUB_ENV"
+            echo "No keystore secret provided; building unsigned AAB/APK."
+            exit 0
+          fi
+          if [[ -n "${KS_B64:-}" ]]; then
+            printf '%s' "$KS_B64" | base64 -d > release.keystore
+          else
+            [[ -n "${KS_PASSPHRASE:-}" ]] || { echo "Missing ANDROID_KEYSTORE_PASSPHRASE" >&2; exit 1; }
+            printf '%s' "$KS_ASC" > release.keystore.asc
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$KS_PASSPHRASE" --decrypt release.keystore.asc > release.keystore
+            rm -f release.keystore.asc
+          fi
+          if [[ -n "${KS_ALIAS:-}" ]]; then
+            keytool -importkeystore -noprompt \
+              -srckeystore release.keystore -srcstorepass "$KS_PASS" -srcalias "$KS_ALIAS" \
+              -destkeystore release.single.jks -deststorepass "$KS_PASS" -destalias "$KS_ALIAS" -destkeypass "${KS_KEY_PASS:-$KS_PASS}" \
+              -deststoretype JKS
+            mv release.single.jks release.keystore
+          fi
+          echo "CARGO_RAPK_RELEASE_KEYSTORE=$PWD/release.keystore" >> "$GITHUB_ENV"
+          echo "CARGO_RAPK_RELEASE_KEYSTORE_PASSWORD=$KS_PASS" >> "$GITHUB_ENV"
+          if [[ -n "${KS_ALIAS:-}" ]]; then
+            echo "CARGO_RAPK_RELEASE_KEYSTORE_ALIAS=$KS_ALIAS" >> "$GITHUB_ENV"
+          fi
+          if [[ -n "${KS_KEY_PASS:-}" ]]; then
+            echo "CARGO_RAPK_RELEASE_KEYSTORE_KEY_PASSWORD=$KS_KEY_PASS" >> "$GITHUB_ENV"
+          fi
+
       - name: Build universal AAB
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
           export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
-          cargo rapk build --release --deterministic --timestamp 0 --universal --format aab --lib --unsigned
+          cargo rapk build --release --deterministic --timestamp 0 --universal --format aab --lib ${unsigned:+--unsigned}
           SLUG="${{ inputs.app-slug }}"
           VER="${{ needs.prepare-version.outputs.version_name }}"
           VER="${VER#v}"
@@ -697,13 +742,38 @@ jobs:
           if [[ -z "${SRC:-}" || ! -f "$SRC" ]]; then echo "::error::AAB not found"; find "${TARGET_DIR:-target}" -name "*.aab" 2>&1 | head -n 20; ls -R target 2>&1 | head -n 20; ls -R ../../target 2>&1 | head -n 20; exit 1; fi
           cp "$SRC" "dist/${SLUG}-${VER}-universal.aab"
 
+      - name: Validate universal AAB
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SLUG="${{ inputs.app-slug }}"
+          VER="${{ needs.prepare-version.outputs.version_name }}"
+          VER="${VER#v}"
+          AAB="dist/${SLUG}-${VER}-universal.aab"
+          [[ -f "$AAB" ]] || { echo "::error::AAB missing at $AAB"; exit 1; }
+          # 1. Bundle must be signed: jarsigner exits 0 even when unsigned,
+          # so fail on its "unsigned" output instead of the exit code.
+          VERIFY_OUT="$(jarsigner -verify "$AAB" 2>&1)"
+          echo "$VERIFY_OUT"
+          if echo "$VERIFY_OUT" | grep -qiE "jar is unsigned|no manifest"; then
+            echo "::error::AAB is not signed ($AAB). Play rejects unsigned bundles." >&2
+            exit 1
+          fi
+          # 2. Bundle must parse: bundletool validate fails (exit != 0) on a
+          # malformed BundleConfig.pb / module layout.
+          BT_VER="1.18.3"
+          curl -fsSL -o "$RUNNER_TEMP/bundletool.jar" \
+            "https://github.com/google/bundletool/releases/download/${BT_VER}/bundletool-all-${BT_VER}.jar"
+          java -jar "$RUNNER_TEMP/bundletool.jar" validate --bundle="$AAB"
+
       - name: Build universal APK
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
           export ANDROID_NDK="$ANDROID_HOME/ndk/${{ inputs.android-ndk-version }}"
-          cargo rapk build --release --deterministic --timestamp 0 --universal --lib --unsigned
+          cargo rapk build --release --deterministic --timestamp 0 --universal --lib ${unsigned:+--unsigned}
           SLUG="${{ inputs.app-slug }}"
           VER="${{ needs.prepare-version.outputs.version_name }}"
           VER="${VER#v}"
