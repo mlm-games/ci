@@ -66,7 +66,7 @@ on:
       cargo-rapk-version:
         required: false
         type: string
-        default: "0.21.1"
+        default: "0.21.2"
       android-d8-version:
         required: false
         type: string
