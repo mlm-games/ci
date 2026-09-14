@@ -163,7 +163,7 @@ jobs:
       #   run: cargo clippy --workspace --all-targets ${{ inputs.features && format('--features {0}', inputs.features) || '' }} -- --deny warnings
 
       - name: Upload debug binary
-        if: inputs.upload-artifacts && inputs.app-slug != ''
+        if: ${{ !cancelled() && inputs.upload-artifacts && inputs.app-slug != '' }}
         shell: bash
         run: |
           set -euxo pipefail
@@ -232,7 +232,7 @@ jobs:
           cargo rapk build --target aarch64-linux-android --lib
 
       - name: Prepare APK artifact
-        if: inputs.upload-artifacts
+        if: ${{ !cancelled() && inputs.upload-artifacts }}
         shell: bash
         run: |
           set -euxo pipefail
