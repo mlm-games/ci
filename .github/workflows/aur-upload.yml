@@ -35,10 +35,21 @@ on:
         type: string
         default: ""
         description: "Installed binary name (defaults to pkgname with -bin suffix stripped)"
+      app-name:
+        required: false
+        type: string
+        default: ""
+        description: "Display name for the .desktop entry (defaults to app-slug)"
       arch:
         required: false
         type: string
         default: "x86_64"
+        description: "Package architecture (single-arch packages only; ignored when binary-name-aarch64 is set)"
+      binary-name-aarch64:
+        required: false
+        type: string
+        default: ""
+        description: "aarch64 release asset name. If set, builds a dual-arch (x86_64 + aarch64) package where binary-name is the x86_64 asset"
       version:
         required: false
         type: string
@@ -56,6 +67,36 @@ on:
         required: false
         type: string
         default: ""
+      install-desktop:
+        required: false
+        type: boolean
+        default: true
+        description: "Install a .desktop launcher entry to /usr/share/applications"
+      desktop-comment:
+        required: false
+        type: string
+        default: ""
+        description: "Comment field for the .desktop entry (defaults to pkgdesc)"
+      desktop-categories:
+        required: false
+        type: string
+        default: "Utility;"
+        description: "Semicolon-separated .desktop Categories (e.g. 'Audio;AudioVideo;Player;')"
+      desktop-mime-type:
+        required: false
+        type: string
+        default: ""
+        description: "Semicolon-separated .desktop MimeType (e.g. 'audio/mpeg;audio/flac;')"
+      desktop-args:
+        required: false
+        type: string
+        default: ""
+        description: "Extra Exec args for the .desktop entry (e.g. '%F' or '%U')"
+      icon-url:
+        required: false
+        type: string
+        default: ""
+        description: "URL of the app icon (png or svg) to install to pixmaps + hicolor. Empty disables icon install."
     secrets:
       AUR_SSH_PRIVATE_KEY:
         required: true
@@ -80,22 +121,30 @@ jobs:
           VERSION="${VERSION#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Download binary and compute hash
+      - name: Download binaries and compute hashes
         id: hash
         run: |
           set -euo pipefail
           BIN="${{ inputs.binary-name }}"
+          BIN_AARCH64="${{ inputs.binary-name-aarch64 }}"
           VERSION="${{ steps.version.outputs.version }}"
           wget -O "$BIN" "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/${BIN}"
           HASH=$(sha256sum "$BIN" | cut -d' ' -f1)
           echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          if [[ -n "$BIN_AARCH64" ]]; then
+            wget -O "$BIN_AARCH64" "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/${BIN_AARCH64}"
+            HASH_AARCH64=$(sha256sum "$BIN_AARCH64" | cut -d' ' -f1)
+            echo "hash_aarch64=$HASH_AARCH64" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Generate PKGBUILD
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           BIN="${{ inputs.binary-name }}"
+          BIN_AARCH64="${{ inputs.binary-name-aarch64 }}"
           HASH="${{ steps.hash.outputs.hash }}"
+          HASH_AARCH64="${{ steps.hash.outputs.hash_aarch64 }}"
           PKGNAME="${{ inputs.pkgname }}"
           PKGDESC="${{ inputs.pkgdesc }}"
           ARCH="${{ inputs.arch }}"
@@ -111,26 +160,115 @@ jobs:
             SLUG="${PKGNAME}"
             SLUG="${SLUG%-bin}"
           fi
+          APP_NAME="${{ inputs.app-name }}"
+          if [[ -z "${APP_NAME}" ]]; then
+            APP_NAME="${SLUG}"
+          fi
+          COMMENT="${{ inputs.desktop-comment }}"
+          if [[ -z "${COMMENT}" ]]; then
+            COMMENT="${PKGDESC}"
+          fi
+          CATEGORIES="${{ inputs.desktop-categories }}"
+          MIMETYPE="${{ inputs.desktop-mime-type }}"
+          DESKTOP_ARGS="${{ inputs.desktop-args }}"
+          ICON_URL="${{ inputs.icon-url }}"
+          INSTALL_DESKTOP="${{ inputs.install-desktop }}"
+          ICON_FILE=""
+          if [[ -n "${ICON_URL}" && "${INSTALL_DESKTOP}" == "true" ]]; then
+            ICON_EXT="${ICON_URL##*.}"
+            ICON_EXT="${ICON_EXT%%\?*}"
+            ICON_EXT="$(printf '%s' "${ICON_EXT}" | tr '[:upper:]' '[:lower:]')"
+            if [[ "${ICON_EXT}" == "svg" ]]; then
+              ICON_FILE="icon.svg"
+            else
+              ICON_FILE="icon.png"
+            fi
+          fi
+          DIR_X64="${BIN%.tar.gz}"
+          DIR_X64="${DIR_X64%.tgz}"
+          DIR_ARM="${BIN_AARCH64%.tar.gz}"
+          DIR_ARM="${DIR_ARM%.tgz}"
 
-          cat > PKGBUILD << PKGEOF
-          # Maintainer: ${MNAME} <${MEMAIL}>
-          pkgname=${PKGNAME}
-          pkgver=${VERSION}
-          pkgrel=1
-          pkgdesc='${PKGDESC}'
-          arch=('${ARCH}')
-          url="https://github.com/${REPO}"
-          license=('${LICENSE}')
-          depends=(${DEPENDS})
-          provides=(${PROVIDES})
-          conflicts=(${CONFLICTS})
-          source=("\${pkgname}-\${pkgver}::https://github.com/${REPO}/releases/download/v\${pkgver}/${BIN}")
-          sha256sums=('${HASH}')
-
-          package() {
-            install -Dm755 "\${srcdir}/\${pkgname}-\${pkgver}" "\${pkgdir}/usr/bin/${SLUG}"
-          }
-          PKGEOF
+          {
+          echo "# Maintainer: ${MNAME} <${MEMAIL}>"
+          echo "pkgname=${PKGNAME}"
+          echo "_pkgname=${SLUG}"
+          echo "pkgver=${VERSION}"
+          echo "_tag=v${VERSION}"
+          echo "pkgrel=1"
+          echo "pkgdesc='${PKGDESC}'"
+          if [[ -n "${BIN_AARCH64}" ]]; then
+            echo "arch=('x86_64' 'aarch64')"
+          else
+            echo "arch=('${ARCH}')"
+          fi
+          echo "url=\"https://github.com/${REPO}\""
+          echo "license=('${LICENSE}')"
+          echo "depends=(${DEPENDS})"
+          echo "provides=(${PROVIDES})"
+          echo "conflicts=(${CONFLICTS})"
+          if [[ -n "${BIN_AARCH64}" ]]; then
+            echo "source_x86_64=(\"${BIN}::https://github.com/${REPO}/releases/download/\${_tag}/${BIN}\")"
+            echo "source_aarch64=(\"${BIN_AARCH64}::https://github.com/${REPO}/releases/download/\${_tag}/${BIN_AARCH64}\")"
+            echo "sha256sums_x86_64=('${HASH}')"
+            echo "sha256sums_aarch64=('${HASH_AARCH64}')"
+          else
+            echo "source=(\"\${pkgname}-\${pkgver}::https://github.com/${REPO}/releases/download/v\${pkgver}/${BIN}\")"
+            echo "sha256sums=('${HASH}')"
+          fi
+          if [[ -n "${ICON_URL}" ]]; then
+            echo "source+=(\"${ICON_FILE}::${ICON_URL}\")"
+            echo "sha256sums+=('SKIP')"
+          fi
+          echo ""
+          echo "package() {"
+          if [[ -n "${BIN_AARCH64}" ]]; then
+            echo "  local dir"
+            echo "  if [[ \"\$CARCH\" == \"x86_64\" ]]; then"
+            echo "    dir=\"\${srcdir}/${DIR_X64}\""
+            echo "  else"
+            echo "    dir=\"\${srcdir}/${DIR_ARM}\""
+            echo "  fi"
+            echo "  install -Dm755 \"\${dir}/${SLUG}\" \"\${pkgdir}/usr/bin/${SLUG}\""
+          else
+            echo "  install -Dm755 \"\${srcdir}/\${pkgname}-\${pkgver}\" \"\${pkgdir}/usr/bin/${SLUG}\""
+          fi
+          if [[ "${INSTALL_DESKTOP}" == "true" ]]; then
+            echo ""
+            echo "  install -Dm644 /dev/stdin \"\${pkgdir}/usr/share/applications/${SLUG}.desktop\" << DESKTOP_EOF"
+            echo "[Desktop Entry]"
+            echo "Name=${APP_NAME}"
+            echo "Comment=${COMMENT}"
+            if [[ -n "${DESKTOP_ARGS}" ]]; then
+              echo "Exec=${SLUG} ${DESKTOP_ARGS}"
+            else
+              echo "Exec=${SLUG}"
+            fi
+            if [[ -n "${ICON_FILE}" ]]; then
+              echo "Icon=${SLUG}"
+            fi
+            echo "Terminal=false"
+            echo "Type=Application"
+            echo "Categories=${CATEGORIES}"
+            if [[ -n "${MIMETYPE}" ]]; then
+              echo "MimeType=${MIMETYPE}"
+            fi
+            echo "StartupNotify=true"
+            echo "StartupWMClass=${SLUG}"
+            echo "DESKTOP_EOF"
+            if [[ -n "${ICON_FILE}" ]]; then
+              echo ""
+              if [[ "${ICON_FILE}" == *.svg ]]; then
+                echo "  install -Dm644 \"\${srcdir}/${ICON_FILE}\" \"\${pkgdir}/usr/share/pixmaps/${SLUG}.svg\""
+                echo "  install -Dm644 \"\${srcdir}/${ICON_FILE}\" \"\${pkgdir}/usr/share/icons/hicolor/scalable/apps/${SLUG}.svg\""
+              else
+                echo "  install -Dm644 \"\${srcdir}/${ICON_FILE}\" \"\${pkgdir}/usr/share/pixmaps/${SLUG}.png\""
+                echo "  install -Dm644 \"\${srcdir}/${ICON_FILE}\" \"\${pkgdir}/usr/share/icons/hicolor/256x256/apps/${SLUG}.png\""
+              fi
+            fi
+          fi
+          echo "}"
+          } > PKGBUILD
 
           echo "Generated PKGBUILD:"
           cat PKGBUILD

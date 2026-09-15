@@ -64,7 +64,7 @@ jobs:
 
 ### `aur-upload.yml`
 
-Publish a PKGBUILD to AUR on release. Downloads the Linux binary from the GitHub release, computes SHA256, and pushes to AUR.
+Publish a PKGBUILD to AUR on release. Downloads the Linux binary from the GitHub release, computes SHA256, installs a `.desktop` launcher + icon by default, and pushes to AUR.
 
 ```yaml
 jobs:
@@ -73,7 +73,12 @@ jobs:
     with:
       pkgname: myapp-bin
       pkgdesc: "Description of my app"
-      binary-name: myapp-linux-x86_64
+      binary-name: myapp-1.2.3-x86_64-unknown-linux-gnu.tar.gz
+      binary-name-aarch64: myapp-1.2.3-aarch64-unknown-linux-gnu.tar.gz
+      app-name: "My App"
+      desktop-categories: "Utility;"
+      desktop-args: "%F"
+      icon-url: "https://raw.githubusercontent.com/me/myapp/main/icon.png"
       license: "MIT OR Apache-2.0"
     secrets:
       AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
@@ -84,13 +89,21 @@ jobs:
 | `pkgname` | — | AUR package name (required) |
 | `pkgdesc` | — | Package description (required) |
 | `binary-name` | — | Release asset name (required, e.g. `myapp-linux-x86_64`) |
+| `binary-name-aarch64` | `""` | aarch64 release asset name; if set, builds a dual-arch (`x86_64` + `aarch64`) package where `binary-name` is the x86_64 asset |
 | `app-slug` | `pkgname` with `-bin` stripped | Installed binary name |
+| `app-name` | `app-slug` | Display name for the `.desktop` entry |
 | `license` | `MIT OR Apache-2.0` | Package license |
 | `depends` | `""` | Space-separated AUR dependencies |
 | `provides` | `""` | Space-separated provides |
 | `conflicts` | `""` | Space-separated conflicts |
 | `version` | `""` (latest release) | Version to publish |
-| `arch` | `x86_64` | Package architecture |
+| `arch` | `x86_64` | Package architecture (single-arch only; ignored for dual-arch) |
+| `install-desktop` | `true` | Install a `.desktop` launcher to `/usr/share/applications` |
+| `desktop-comment` | `pkgdesc` | `Comment` field for the `.desktop` entry |
+| `desktop-categories` | `"Utility;"` | Semicolon-separated `.desktop` Categories |
+| `desktop-mime-type` | `""` | Semicolon-separated `.desktop` MimeType |
+| `desktop-args` | `""` | Extra `Exec` args (e.g. `"%F"` or `"%U"`) |
+| `icon-url` | `""` | App icon URL (png/svg); installed to `pixmaps` + `hicolor`. Empty disables icon install |
 | `maintainer-name` | `""` | AUR maintainer name |
 | `maintainer-email` | `""` | AUR maintainer email |
 
