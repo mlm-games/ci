@@ -26,6 +26,16 @@ on:
         required: false
         type: string
         default: ""
+      optdepends:
+        required: false
+        type: string
+        default: ""
+        description: "Optional dependencies, e.g. \"'yay: for installing from AUR' 'foo: bar reason'\" (quoted entries, eval'd into the array)"
+      options:
+        required: false
+        type: string
+        default: "!strip"
+        description: "Space-separated makepkg options (e.g. '!strip !lto')"
       binary-name:
         required: true
         type: string
@@ -150,6 +160,8 @@ jobs:
           ARCH="${{ inputs.arch }}"
           LICENSE="${{ inputs.license }}"
           DEPENDS="${{ inputs.depends }}"
+          OPTDEPENDS="${{ inputs.optdepends }}"
+          OPTIONS="${{ inputs.options }}"
           PROVIDES="${{ inputs.provides }}"
           CONFLICTS="${{ inputs.conflicts }}"
           MNAME="${{ inputs.maintainer-name }}"
@@ -205,8 +217,15 @@ jobs:
           echo "url=\"https://github.com/${REPO}\""
           echo "license=('${LICENSE}')"
           echo "depends=(${DEPENDS})"
+          if [[ -n "${OPTDEPENDS}" ]]; then
+            echo "optdepends=("
+            # shellcheck disable=SC2086
+            eval "for _od in ${OPTDEPENDS}; do echo \"  '\$_od'\"; done"
+            echo ")"
+          fi
           echo "provides=(${PROVIDES})"
           echo "conflicts=(${CONFLICTS})"
+          echo "options=(${OPTIONS})"
           if [[ -n "${BIN_AARCH64}" ]]; then
             echo "source_x86_64=(\"${BIN}::https://github.com/${REPO}/releases/download/\${_tag}/${BIN}\")"
             echo "source_aarch64=(\"${BIN_AARCH64}::https://github.com/${REPO}/releases/download/\${_tag}/${BIN_AARCH64}\")"

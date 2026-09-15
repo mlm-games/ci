@@ -94,6 +94,8 @@ jobs:
 | `app-name` | `app-slug` | Display name for the `.desktop` entry |
 | `license` | `MIT OR Apache-2.0` | Package license |
 | `depends` | `""` | Space-separated AUR dependencies |
+| `optdepends` | `""` | Optional dependencies, e.g. `"'yay: for AUR installs'"` (quoted entries) |
+| `options` | `"!strip"` | Space-separated makepkg options |
 | `provides` | `""` | Space-separated provides |
 | `conflicts` | `""` | Space-separated conflicts |
 | `version` | `""` (latest release) | Version to publish |
