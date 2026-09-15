@@ -107,6 +107,11 @@ on:
         type: string
         default: ""
         description: "URL of the app icon (png or svg) to install to pixmaps + hicolor. Empty disables icon install."
+      desktop-file-path:
+        required: false
+        type: string
+        default: ""
+        description: "Repo-relative path to a .desktop file (e.g. 'others/flathub/io.github.mlm_games.myapp.desktop') fetched at the release tag. Icon= is rewritten to app-slug. Overrides the desktop-* inputs."
     secrets:
       AUR_SSH_PRIVATE_KEY:
         required: true
@@ -184,6 +189,7 @@ jobs:
           MIMETYPE="${{ inputs.desktop-mime-type }}"
           DESKTOP_ARGS="${{ inputs.desktop-args }}"
           ICON_URL="${{ inputs.icon-url }}"
+          DESKTOP_FILE="${{ inputs.desktop-file-path }}"
           INSTALL_DESKTOP="${{ inputs.install-desktop }}"
           ICON_FILE=""
           if [[ -n "${ICON_URL}" && "${INSTALL_DESKTOP}" == "true" ]]; then
@@ -200,6 +206,34 @@ jobs:
           DIR_X64="${DIR_X64%.tgz}"
           DIR_ARM="${BIN_AARCH64%.tar.gz}"
           DIR_ARM="${DIR_ARM%.tgz}"
+
+          DESKTOP_SNIPPET=""
+          if [[ "${INSTALL_DESKTOP}" == "true" && -n "${DESKTOP_FILE}" ]]; then
+            for TAG in "v${VERSION}" "${VERSION}"; do
+              DESKTOP_URL="https://raw.githubusercontent.com/${REPO}/${TAG}/${DESKTOP_FILE}"
+              if curl -fsSL --max-time 30 -o upstream.desktop "${DESKTOP_URL}"; then
+                echo "Fetched .desktop from ${DESKTOP_URL}"
+                break
+              fi
+              echo "Not found: ${DESKTOP_URL}"
+              rm -f upstream.desktop
+            done
+            if [[ ! -f upstream.desktop ]]; then
+              echo "::error::desktop-file-path '${DESKTOP_FILE}' not found at tag v${VERSION} or ${VERSION}" >&2
+              exit 1
+            fi
+            if ! grep -q '^\[Desktop Entry\]' upstream.desktop; then
+              echo "::error::${DESKTOP_FILE} is not a valid .desktop file (missing [Desktop Entry])" >&2
+              exit 1
+            fi
+            sed -i -E "s/^Icon=.*/Icon=${SLUG}/" upstream.desktop
+            if command -v desktop-file-validate >/dev/null 2>&1; then
+              desktop-file-validate upstream.desktop
+            else
+              echo "desktop-file-validate not available, skipping validation"
+            fi
+            DESKTOP_SNIPPET="$(cat upstream.desktop)"
+          fi
 
           {
           echo "# Maintainer: ${MNAME} <${MEMAIL}>"
@@ -253,28 +287,35 @@ jobs:
             echo "  install -Dm755 \"\${srcdir}/\${pkgname}-\${pkgver}\" \"\${pkgdir}/usr/bin/${SLUG}\""
           fi
           if [[ "${INSTALL_DESKTOP}" == "true" ]]; then
-            echo ""
-            echo "  install -Dm644 /dev/stdin \"\${pkgdir}/usr/share/applications/${SLUG}.desktop\" << DESKTOP_EOF"
-            echo "[Desktop Entry]"
-            echo "Name=${APP_NAME}"
-            echo "Comment=${COMMENT}"
-            if [[ -n "${DESKTOP_ARGS}" ]]; then
-              echo "Exec=${SLUG} ${DESKTOP_ARGS}"
+            if [[ -n "${DESKTOP_SNIPPET}" ]]; then
+              echo ""
+              echo "  install -Dm644 /dev/stdin \"\${pkgdir}/usr/share/applications/${SLUG}.desktop\" << DESKTOP_EOF"
+              printf '%s\n' "${DESKTOP_SNIPPET}"
+              echo "DESKTOP_EOF"
             else
-              echo "Exec=${SLUG}"
+              echo ""
+              echo "  install -Dm644 /dev/stdin \"\${pkgdir}/usr/share/applications/${SLUG}.desktop\" << DESKTOP_EOF"
+              echo "[Desktop Entry]"
+              echo "Name=${APP_NAME}"
+              echo "Comment=${COMMENT}"
+              if [[ -n "${DESKTOP_ARGS}" ]]; then
+                echo "Exec=${SLUG} ${DESKTOP_ARGS}"
+              else
+                echo "Exec=${SLUG}"
+              fi
+              if [[ -n "${ICON_FILE}" ]]; then
+                echo "Icon=${SLUG}"
+              fi
+              echo "Terminal=false"
+              echo "Type=Application"
+              echo "Categories=${CATEGORIES}"
+              if [[ -n "${MIMETYPE}" ]]; then
+                echo "MimeType=${MIMETYPE}"
+              fi
+              echo "StartupNotify=true"
+              echo "StartupWMClass=${SLUG}"
+              echo "DESKTOP_EOF"
             fi
-            if [[ -n "${ICON_FILE}" ]]; then
-              echo "Icon=${SLUG}"
-            fi
-            echo "Terminal=false"
-            echo "Type=Application"
-            echo "Categories=${CATEGORIES}"
-            if [[ -n "${MIMETYPE}" ]]; then
-              echo "MimeType=${MIMETYPE}"
-            fi
-            echo "StartupNotify=true"
-            echo "StartupWMClass=${SLUG}"
-            echo "DESKTOP_EOF"
             if [[ -n "${ICON_FILE}" ]]; then
               echo ""
               if [[ "${ICON_FILE}" == *.svg ]]; then

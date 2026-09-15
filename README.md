@@ -76,13 +76,18 @@ jobs:
       binary-name: myapp-1.2.3-x86_64-unknown-linux-gnu.tar.gz
       binary-name-aarch64: myapp-1.2.3-aarch64-unknown-linux-gnu.tar.gz
       app-name: "My App"
-      desktop-categories: "Utility;"
-      desktop-args: "%F"
+      desktop-file-path: "others/flathub/io.github.mlm_games.myapp.desktop"
       icon-url: "https://raw.githubusercontent.com/me/myapp/main/icon.png"
       license: "MIT OR Apache-2.0"
     secrets:
       AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
 ```
+
+Prefer `desktop-file-path` over the `desktop-*` inputs: it fetches the
+`.desktop` file at the release tag, rewrites `Icon=` to the app slug,
+validates it, and embeds the content — single source of truth shared
+with Flathub. When set, the `desktop-*` inputs are ignored. When empty,
+the `.desktop` entry is generated from the `desktop-*` inputs.
 
 | Input | Default | Description |
 |-------|---------|-------------|
@@ -101,6 +106,7 @@ jobs:
 | `version` | `""` (latest release) | Version to publish |
 | `arch` | `x86_64` | Package architecture (single-arch only; ignored for dual-arch) |
 | `install-desktop` | `true` | Install a `.desktop` launcher to `/usr/share/applications` |
+| `desktop-file-path` | `""` | Repo-relative `.desktop` path fetched at the release tag (e.g. `"others/flathub/io.github.mlm_games.myapp.desktop"`); `Icon=` rewritten to slug. Overrides `desktop-*` inputs |
 | `desktop-comment` | `pkgdesc` | `Comment` field for the `.desktop` entry |
 | `desktop-categories` | `"Utility;"` | Semicolon-separated `.desktop` Categories |
 | `desktop-mime-type` | `""` | Semicolon-separated `.desktop` MimeType |
