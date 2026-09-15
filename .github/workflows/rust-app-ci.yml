@@ -201,6 +201,8 @@ jobs:
           distribution: ${{ inputs.java-distribution }}
 
       - uses: android-actions/setup-android@v4
+        with:
+          packages: ''
 
       - name: Install Android SDK/NDK
         shell: bash
