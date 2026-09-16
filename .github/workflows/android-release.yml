@@ -317,9 +317,6 @@ jobs:
           ls -lh artifacts/ || true
 
       - name: Upload artifacts (per flavor)
-        # always(): a failed Play upload must not lose the built AAB/APKs.
-        # When Play failed, upload here as fallback; on success the
-        # release job below attaches them to the GitHub Release instead.
         if: ${{ always() && (!cancelled() || steps.play-upload.outcome == 'failure') }}
         uses: actions/upload-artifact@v4
         with:
@@ -328,10 +325,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    # always(): still publish the GitHub Release when the Play upload
-    # (or one flavor) failed — the built artifacts must not be lost.
-    # Skipped only when the whole workflow was cancelled.
-    if: ${{ !cancelled() && (needs.prepare-version.result == 'success') }}
+    if: ${{ !cancelled() && needs.prepare-version.result == 'success' && needs.build.result == 'success' }}
     needs: [prepare-version, build]
     runs-on: ubuntu-latest
     permissions:
