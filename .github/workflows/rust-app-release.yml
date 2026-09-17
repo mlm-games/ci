@@ -233,8 +233,24 @@ jobs:
           esac
           NEW_VERSION="$MAJ.$MIN.$PAT"
 
-          IFS='.' read -r NMAJ NMIN NPAT <<<"$NEW_VERSION"
-          VERSION_CODE=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
+          # Miniter-style monotonic base: bump +10 per release so per-ABI
+          # offsets (universal +1, arm64 0, v7a -1, x86_64 -2, x86 -3) never
+          # collide with the previous release's codes. Falls back to the old
+          # semver-derived code when no base exists yet.
+          OLD_CODE=""
+          while IFS= read -r MF; do
+            [[ -n "$MF" ]] || continue
+            C=$(grep -m1 -E '^version_code\s*=' "$MF" | grep -oE '[0-9]+' || true)
+            if [[ -n "$C" && ( -z "$OLD_CODE" || "$C" -gt "$OLD_CODE" ) ]]; then
+              OLD_CODE="$C"
+            fi
+          done < <(grep -rl '^\[package\.metadata\.android\.sdk\]' --include=Cargo.toml "$WD" 2>/dev/null | grep -v '/target/' || true)
+          if [[ -n "$OLD_CODE" ]]; then
+            VERSION_CODE=$(( OLD_CODE + 10 ))
+          else
+            IFS='.' read -r NMAJ NMIN NPAT <<<"$NEW_VERSION"
+            VERSION_CODE=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
+          fi
 
           sed -i -E "/^\[workspace\.package\]/,/^\[/ s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" "$MANIFEST" || true
           find "$WD" -name Cargo.toml -not -path "*/target/*" -not -path "*/uniffi-bindgen/*" -exec sed -i -E "/^\[package\]/,/^\[/ s/^version = \"$OLD_VERSION\"/version = \"$NEW_VERSION\"/" {} \;
@@ -272,15 +288,29 @@ jobs:
           if [[ "${{ steps.bump.outputs.bumped }}" == "true" ]]; then
             VN="${{ steps.bump.outputs.version_name }}"
             VC="${{ steps.bump.outputs.version_code }}"
-          elif [[ "${{ github.event_name }}" == "push" ]]; then
-            REF_NAME="${{ github.ref_name }}"
-            VN="${REF_NAME#v}"
-            IFS='.' read -r NMAJ NMIN NPAT <<<"$VN"; : "${NMAJ:=0}" "${NMIN:=0}" "${NPAT:=0}"
-            VC=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
           else
             VN="${{ steps.read.outputs.version }}"
-            IFS='.' read -r NMAJ NMIN NPAT <<<"$VN"; : "${NMAJ:=0}" "${NMIN:=0}" "${NPAT:=0}"
-            VC=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
+            # Base code is monotonic (+10 per release, Miniter-style), not
+            # semver-derived: read it back from the manifest so changelog
+            # paths and release notes track the stored value. Fall back to
+            # the legacy semver derivation when no base exists yet.
+            MANIFEST="${{ inputs.working-directory }}/Cargo.toml"
+            VC=""
+            while IFS= read -r MF; do
+              [[ -n "$MF" ]] || continue
+              C=$(grep -m1 -E '^version_code\s*=' "$MF" | grep -oE '[0-9]+' || true)
+              if [[ -n "$C" && ( -z "$VC" || "$C" -gt "$VC" ) ]]; then
+                VC="$C"
+              fi
+            done < <(grep -rl '^\[package\.metadata\.android\.sdk\]' --include=Cargo.toml "$(dirname "$MANIFEST")" 2>/dev/null | grep -v '/target/' || true)
+            if [[ -z "$VC" ]]; then
+              if [[ "${{ github.event_name }}" == "push" ]]; then
+                VN="${{ github.ref_name }}"
+                VN="${VN#v}"
+              fi
+              IFS='.' read -r NMAJ NMIN NPAT <<<"$VN"; : "${NMAJ:=0}" "${NMIN:=0}" "${NPAT:=0}"
+              VC=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
+            fi
           fi
           echo "version_name=$VN" >> "$GITHUB_OUTPUT"
           echo "version_code=$VC" >> "$GITHUB_OUTPUT"

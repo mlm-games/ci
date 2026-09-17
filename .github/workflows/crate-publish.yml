@@ -102,7 +102,22 @@ jobs:
 
           if [[ "${{ inputs.write-android-version-code }}" == "true" ]]; then
             IFS='.' read -r NMAJ NMIN NPAT <<<"$NEW_VERSION"
-            VERSION_CODE=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
+            OLD_CODE=""
+            while IFS= read -r MF; do
+              [[ -n "$MF" ]] || continue
+              C=$(grep -m1 -E '^version_code\s*=' "$MF" | grep -oE '[0-9]+' || true)
+              if [[ -n "$C" && ( -z "$OLD_CODE" || "$C" -gt "$OLD_CODE" ) ]]; then
+                OLD_CODE="$C"
+              fi
+            done < <(grep -rl '^\[package\.metadata\.android\.sdk\]' --include=Cargo.toml "${{ inputs.working-directory }}" 2>/dev/null | grep -v '/target/' || true)
+            # Miniter-style monotonic base: +10 per publish so per-ABI offsets
+            # never collide with the previous release. Falls back to the
+            # legacy semver derivation when no base exists yet.
+            if [[ -n "$OLD_CODE" ]]; then
+              VERSION_CODE=$(( OLD_CODE + 10 ))
+            else
+              VERSION_CODE=$(( (1<<24) | (NMAJ<<16) | (NMIN<<8) | NPAT ))
+            fi
             # Root manifest plus workspace members (e.g. apps/renamite-editor/Cargo.toml)
             while IFS= read -r MANIFEST; do
               if grep -q '^version_code\s*=' "$MANIFEST"; then
