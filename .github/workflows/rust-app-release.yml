@@ -359,6 +359,29 @@ jobs:
           git push && git push --tags
           echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # When the bump is owned by an earlier workflow in the dispatch chain (e.g.
+      # crate-publish), this workflow runs with bump-type: none. The notes are
+      # still written above, but only a bump commits them there, so commit them
+      # here instead of dropping them. Same job on purpose: the files only exist
+      # in this workspace.
+      - name: Commit release notes
+        if: steps.bump.outputs.bumped != 'true' && steps.notes.outputs.files-changed != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          IFS=',' read -ra PATHS <<< "${{ steps.notes.outputs.files-changed }}"
+          for p in "${PATHS[@]}"; do
+            if [[ -n "$p" && -e "$p" ]]; then git add "$p"; fi
+          done
+          if git diff --cached --quiet; then
+            echo "No release-notes changes to commit"
+            exit 0
+          fi
+          git commit -m "docs: update release notes for v${{ steps.resolve.outputs.version_name }} [skip ci]"
+          git push
+
   build-desktop:
     if: inputs.include-desktop
     name: Build and package (${{ matrix.os }})
