@@ -127,7 +127,10 @@ jobs:
           version-file-path: './fastlane/metadata/android/en-US/changelogs/${{ steps.bumpcalc.outputs.version_code }}.txt'
           version-code: '${{ steps.bumpcalc.outputs.version_code }}'
           format: '- {{subject}}'
-          exclude-patterns: 'chore:,ci:,docs:,build:,style:,test:,Bump version,bump version,Update release notes,Merge pull request,[skip ci],dependabot'
+          # Literal, ^-anchored prefixes (the generator escapes them as regex).
+          # Each conventional-commit type needs a "type(" entry too, since
+          # "chore:" does not match "chore(ui):".
+          exclude-patterns: 'chore:,chore(,ci:,ci(,docs:,build:,style:,style(,test:,test(,Bump version,bump version,Update release notes,Merge pull request,[skip ci],dependabot'
           auto-commit: 'false'
           debug: 'true'
 
