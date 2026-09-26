@@ -53,7 +53,7 @@ on:
         required: false
 
 concurrency:
-  group: crate-publish-${{ github.ref }}
+  group: ci-crate-publish-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:

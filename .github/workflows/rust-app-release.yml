@@ -133,9 +133,6 @@ on:
       notes-exclude-patterns:
         required: false
         type: string
-        # Literal, ^-anchored prefixes (the generator escapes them as regex).
-        # Each conventional-commit type needs a "type(" entry too, since
-        # "chore:" does not match "chore(ui):".
         default: "chore:,chore(,ci:,ci(,docs:,build:,Bump version,Merge pull request,[skip ci]"
       dispatch-on-release:
         required: false
@@ -176,7 +173,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: ci-release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
