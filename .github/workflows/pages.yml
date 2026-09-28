@@ -62,9 +62,10 @@ jobs:
           sed -i 's#</body>#<script src="coi-serviceworker.js"></script></body>#' ${{ inputs.dist-dir }}/index.html
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: ${{ inputs.working-directory }}/${{ inputs.dist-dir }}
+          include-hidden-files: true
 
   deploy:
     runs-on: ubuntu-latest
