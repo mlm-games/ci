@@ -40,6 +40,11 @@ on:
         required: false
         type: string
         default: ""
+      publish-release:
+        required: false
+        type: boolean
+        default: true
+        description: 'Create the GitHub release and commit the version bump'
       prerelease:
         required: false
         type: boolean
@@ -133,6 +138,7 @@ jobs:
 
       - name: Commit version bump + release notes
         id: commit
+        if: ${{ inputs.publish-release || (inputs.play-track != '' && inputs.play-track != 'none') }}
         run: |
           set -euo pipefail
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -325,7 +331,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: ${{ !cancelled() && needs.prepare-version.result == 'success' && needs.build.result == 'success' }}
+    if: ${{ !cancelled() && inputs.publish-release && needs.prepare-version.result == 'success' && needs.build.result == 'success' }}
     needs: [prepare-version, build]
     runs-on: ubuntu-latest
     permissions:
