@@ -252,6 +252,28 @@ jobs:
             ls -lh artifacts/
           fi
 
+      - name: Stage release notes for Play
+        id: whatsnew
+        if: inputs.play-track != '' && inputs.play-track != 'none' && (inputs.play-flavor == '' || inputs.play-flavor == matrix.flavor)
+        run: |
+          set -euo pipefail
+          DIR=""
+          VC="${{ needs.prepare-version.outputs.version_code }}"
+          SRC="./fastlane/metadata/android/en-US/changelogs/${VC}.txt"
+          if [[ -n "$VC" && -f "$SRC" ]]; then
+            mkdir -p play-whatsnew
+            NOTES=$(<"$SRC")
+            export LC_ALL=C.UTF-8
+            if (( ${#NOTES} > 500 )); then
+              echo "::warning::Release notes for version_code $VC exceed 500 chars; truncating for Play" >&2
+            fi
+            printf '%s' "${NOTES:0:500}" > play-whatsnew/whatsnew-en-US
+            DIR="play-whatsnew"
+          else
+            echo "::warning::No changelog at $SRC; uploading without release notes" >&2
+          fi
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
       - name: Upload AAB to Google Play
         id: play-upload
         if: inputs.play-track != '' && inputs.play-track != 'none' && (inputs.play-flavor == '' || inputs.play-flavor == matrix.flavor)
@@ -260,9 +282,9 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: ${{ inputs.application-id }}
           releaseFiles: ${{ steps.aab.outputs.path }}
-          track: ${{ inputs.play-track }}
+          tracks: ${{ inputs.play-track }}
           status: completed
-          whatsNewDirectory: fastlane/metadata/android
+          whatsNewDirectory: ${{ steps.whatsnew.outputs.dir }}
 
       - name: Clean before APK build
         if: ${{ !cancelled() }}

@@ -172,6 +172,16 @@ on:
         required: false
       PLAY_SERVICE_ACCOUNT_JSON:
         required: false
+    outputs:
+      version_name:
+        description: "Release version name produced by prepare-version"
+        value: ${{ jobs.prepare-version.outputs.version_name }}
+      version_code:
+        description: "Android version code produced by prepare-version"
+        value: ${{ jobs.prepare-version.outputs.version_code }}
+      commit_sha:
+        description: "Commit containing the version bump and release notes"
+        value: ${{ jobs.prepare-version.outputs.commit_sha }}
 
 permissions:
   contents: write
@@ -197,6 +207,7 @@ jobs:
       bumped: ${{ steps.bump.outputs.bumped || 'false' }}
       commit_sha: ${{ steps.commit.outputs.commit_sha || steps.resolve.outputs.commit_sha }}
       release_notes: ${{ steps.notes.outputs.release-notes }}
+      version_file_path: ${{ steps.notes-paths.outputs.version-file-path }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1040,12 +1051,34 @@ jobs:
           echo "path=$AAB" >> "$GITHUB_OUTPUT"
           echo "Found AAB $AAB"
 
+      - name: Stage release notes for Play
+        id: whatsnew
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIR=""
+          VFP="${{ needs.prepare-version.outputs.version_file_path }}"
+          if [[ -n "$VFP" && -f "$VFP" && "$(basename "$(dirname "$VFP")")" == "changelogs" ]]; then
+            LOCALE=$(basename "$(dirname "$(dirname "$VFP")")")
+            mkdir -p dist-play/whatsnew
+            NOTES=$(<"$VFP")
+            export LC_ALL=C.UTF-8
+            if (( ${#NOTES} > 500 )); then
+              echo "::warning::Release notes exceed 500 chars; truncating for Play" >&2
+            fi
+            printf '%s' "${NOTES:0:500}" > "dist-play/whatsnew/whatsnew-$LOCALE"
+            DIR="dist-play/whatsnew"
+          elif [[ -n "$VFP" ]]; then
+            echo "::warning::No changelog at $VFP; uploading without release notes" >&2
+          fi
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
       - name: Upload to Google Play
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: ${{ steps.pkg.outputs.name }}
           releaseFiles: ${{ steps.aab.outputs.path }}
-          track: ${{ inputs.play-track }}
+          tracks: ${{ inputs.play-track }}
           status: completed
-          whatsNewDirectory: fastlane/metadata/android
+          whatsNewDirectory: ${{ steps.whatsnew.outputs.dir }}
