@@ -108,6 +108,11 @@ on:
         required: false
         type: boolean
         default: false
+      publish-release:
+        required: false
+        type: boolean
+        default: true
+        description: 'Create the GitHub release and commit the version bump'
       generate-release-notes:
         required: false
         type: boolean
@@ -343,7 +348,7 @@ jobs:
 
       - name: Commit and tag
         id: commit
-        if: steps.bump.outputs.bumped == 'true'
+        if: steps.bump.outputs.bumped == 'true' && (inputs.publish-release || inputs.play-track != '' && inputs.play-track != 'none')
         shell: bash
         run: |
           set -euo pipefail
@@ -896,7 +901,7 @@ jobs:
           if-no-files-found: warn
 
   release:
-    if: ${{ always() && !cancelled() && !failure() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && !cancelled() && !failure() && inputs.publish-release && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     needs:
       - prepare-version
       - build-desktop
