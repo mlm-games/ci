@@ -209,6 +209,7 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
+          set -euo pipefail
           PKG_FLAGS="--locked"
           EXCLUDES="${{ inputs.workspace-exclude }}"
           if [ "${{ inputs.workspace-publish }}" == "true" ]; then
