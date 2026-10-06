@@ -397,6 +397,7 @@ jobs:
           fi
           git commit -m "docs: update release notes for v${{ steps.resolve.outputs.version_name }} [skip ci]"
           git push
+          echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   build-desktop:
     if: inputs.include-desktop
