@@ -60,6 +60,11 @@ on:
         type: string
         default: ""
         description: "aarch64 release asset name. If set, builds a dual-arch (x86_64 + aarch64) package where binary-name is the x86_64 asset"
+      extra-binaries:
+        required: false
+        type: string
+        default: ""
+        description: "Comma-separated DEST names of extra binaries inside the archive, installed to /usr/bin/DEST. Must match extra-binaries in the release workflow."
       version:
         required: false
         type: string
@@ -142,6 +147,7 @@ jobs:
           set -euo pipefail
           BIN="${{ inputs.binary-name }}"
           BIN_AARCH64="${{ inputs.binary-name-aarch64 }}"
+          EXTRA="${{ inputs.extra-binaries }}"
           VERSION="${{ steps.version.outputs.version }}"
           wget -O "$BIN" "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/${BIN}"
           HASH=$(sha256sum "$BIN" | cut -d' ' -f1)
@@ -285,6 +291,17 @@ jobs:
             echo "  install -Dm755 \"\${dir}/${SLUG}\" \"\${pkgdir}/usr/bin/${SLUG}\""
           else
             echo "  install -Dm755 \"\${srcdir}/\${pkgname}-\${pkgver}\" \"\${pkgdir}/usr/bin/${SLUG}\""
+          fi
+          if [[ -n "$EXTRA" ]]; then
+            if [[ -z "$BIN_AARCH64" ]]; then
+              echo "::error::extra-binaries requires binary-name-aarch64 (tarball layout)" >&2
+              exit 1
+            fi
+            IFS=',' read -ra EXTRAS <<< "$EXTRA"
+            for name in "${EXTRAS[@]}"; do
+              [[ -n "$name" ]] || continue
+              echo "  install -Dm755 \"\${dir}/${name}\" \"\${pkgdir}/usr/bin/${name}\""
+            done
           fi
           if [[ "${INSTALL_DESKTOP}" == "true" ]]; then
             if [[ -n "${DESKTOP_SNIPPET}" ]]; then

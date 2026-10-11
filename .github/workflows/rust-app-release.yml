@@ -24,6 +24,11 @@ on:
         type: string
         default: ""
         description: "Extra args for cargo build, e.g. '-p app_shell'"
+      extra-binaries:
+        required: false
+        type: string
+        default: ""
+        description: "Comma-separated SOURCE=DEST pairs shipped alongside the main binary, e.g. 'renamite=renamite-cli'. DEST is the name inside the archive."
       system-deps-linux:
         required: false
         type: string
@@ -482,6 +487,7 @@ jobs:
           TARGET: ${{ steps.triple.outputs.target }}
           BIN: ${{ inputs.bin-name || inputs.app-slug }}
           OUT: ${{ inputs.app-slug }}
+          EXTRA: ${{ inputs.extra-binaries }}
         run: |
           set -euxo pipefail
           VER="${{ needs.prepare-version.outputs.version_name }}"
@@ -507,6 +513,26 @@ jobs:
               cp "$TARGET_DIR/${TARGET}/release/${BIN}" "$OUTDIR/${OUT}" || true
             fi
           fi
+          if [[ -n "$EXTRA" ]]; then
+            IFS=',' read -ra EXTRAS <<< "$EXTRA"
+            for pair in "${EXTRAS[@]}"; do
+              [[ -n "$pair" && "$pair" == *=* ]] || continue
+              SRC="${pair%%=*}"
+              DST="${pair##*=}"
+              [[ -n "$SRC" && -n "$DST" ]] || continue
+              found=""
+              for cand in "$TARGET_DIR/${TARGET}/release/${SRC}" "target/${TARGET}/release/${SRC}" "../../target/${TARGET}/release/${SRC}"; do
+                if [ -f "$cand" ]; then found="$cand"; break; fi
+              done
+              if [ -n "$found" ]; then
+                cp "$found" "$OUTDIR/${DST}"
+                echo "Packaged extra binary ${SRC} -> ${DST}"
+              else
+                echo "::error::Extra binary ${SRC} not found in target/${TARGET}/release (checked TARGET_DIR=$TARGET_DIR)"
+                exit 1
+              fi
+            done
+          fi
           for f in README* LICENSE* CHANGELOG*; do [ -e "$f" ] && cp "$f" "$OUTDIR/" || true; [ -e "../../$f" ] && cp "../../$f" "$OUTDIR/" || true; done
           tar -C "dist" -czf "${OUTDIR}.tar.gz" "$(basename "$OUTDIR")"
 
@@ -517,6 +543,7 @@ jobs:
           TARGET: ${{ steps.triple.outputs.target }}
           BIN: ${{ inputs.bin-name || inputs.app-slug }}
           OUT: ${{ inputs.app-slug }}
+          EXTRA: ${{ inputs.extra-binaries }}
         run: |
           $ErrorActionPreference = "Stop"
           $ver = "${{ needs.prepare-version.outputs.version_name }}" -replace '^v',''
@@ -529,6 +556,19 @@ jobs:
           $copied = $false
           foreach ($c in $candidates) { if (Test-Path $c) { Copy-Item $c "$out\$env:OUT.exe"; $copied = $true; break } }
           if (-not $copied) { Copy-Item "target\$tgt\release\$bin.exe" "$out\$env:OUT.exe" -ErrorAction SilentlyContinue }
+          if ($env:EXTRA) {
+            foreach ($pair in $env:EXTRA.Split(',')) {
+              if (-not $pair.Contains('=')) { continue }
+              $parts = $pair.Split('=')
+              $src = $parts[0]; $dst = $parts[1]
+              if (-not $src -or -not $dst) { continue }
+              $ecands = @("target\$tgt\release\$src.exe", "..\..\target\$tgt\release\$src.exe", "$td\$tgt\release\$src.exe")
+              $efound = $null
+              foreach ($c in $ecands) { if (Test-Path $c) { $efound = $c; break } }
+              if ($efound) { Copy-Item $efound "$out\$dst.exe"; Write-Host "Packaged extra binary $src -> $dst" }
+              else { Write-Host "::error::Extra binary $src not found"; exit 1 }
+            }
+          }
           foreach ($f in @("README*", "LICENSE*", "CHANGELOG*")) {
             Get-ChildItem $f -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName "$out\" }
             Get-ChildItem "..\..\\$f" -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName "$out\" }
