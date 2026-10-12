@@ -218,7 +218,64 @@ jobs:
               PKG_FLAGS="$PKG_FLAGS --exclude $ex"
             done
           fi
-          cargo publish $PKG_FLAGS
+
+          # Publishing is not idempotent. A re-run (or a run whose previous
+          # attempt uploaded some crates before failing) must not abort because
+          # an earlier attempt already put a crate on the index. Drop every
+          # crate whose version is already there, then let cargo publish the
+          # rest in dependency order.
+          index_path() {
+            local lower
+            lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+            case ${#lower} in
+              1) printf '1/%s' "$lower" ;;
+              2) printf '2/%s' "$lower" ;;
+              3) printf '3/%s/%s' "${lower:0:1}" "$lower" ;;
+              *) printf '%s/%s/%s' "${lower:0:2}" "${lower:2:2}" "$lower" ;;
+            esac
+          }
+
+          on_index() {
+            local name="$1" version="$2"
+            local path
+            path=$(index_path "$name")
+            curl -fsS --max-time 20 "https://index.crates.io/$path" 2>/dev/null \
+              | grep -q "\"vers\":\"$version\""
+          }
+
+          SKIP_FLAGS=()
+          REMAINING=0
+          while read -r name version; do
+            [ -n "$name" ] || continue
+            if on_index "$name" "$version"; then
+              echo "::notice::$name@$version is already on crates.io, skipping it"
+              SKIP_FLAGS+=(--exclude "$name")
+            else
+              echo "::notice::$name@$version will be published"
+              REMAINING=$((REMAINING + 1))
+            fi
+          done < <(cargo metadata --no-deps --format-version=1 | jq -r '.packages[] | "\(.name) \(.version)"')
+
+          if [ "$REMAINING" -eq 0 ]; then
+            echo "Every workspace crate is already published at this version; nothing to do."
+            exit 0
+          fi
+
+          set +e
+          OUTPUT=$(cargo publish $PKG_FLAGS ${SKIP_FLAGS[@]+"${SKIP_FLAGS[@]}"} 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+
+          # A crate whose upload is still settling can race the index and be
+          # reported as already existing. That is a success for this release,
+          # not a failure: the re-run path above covers anything still missing.
+          if [ $STATUS -ne 0 ] && ! grep -q "already exists on crates.io index" <<<"$OUTPUT"; then
+            exit $STATUS
+          fi
+          if [ $STATUS -ne 0 ]; then
+            echo "::notice::publish reported crates already on the index; treating as done"
+          fi
 
   release:
     if: inputs.create-release
