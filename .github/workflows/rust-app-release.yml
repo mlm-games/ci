@@ -481,7 +481,7 @@ jobs:
         run: cargo build --release --locked --target ${{ steps.triple.outputs.target }} ${{ inputs.cargo-build-args }} ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
 
       - name: Package (tar.gz) [Linux/macOS]
-        if: ${{ !cancelled() && runner.os != 'Windows' }}
+        if: ${{ runner.os != 'Windows' }}
         shell: bash
         env:
           TARGET: ${{ steps.triple.outputs.target }}
@@ -537,7 +537,7 @@ jobs:
           tar -C "dist" -czf "${OUTDIR}.tar.gz" "$(basename "$OUTDIR")"
 
       - name: Package (zip) [Windows]
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        if: ${{ runner.os == 'Windows' }}
         shell: pwsh
         env:
           TARGET: ${{ steps.triple.outputs.target }}
@@ -838,7 +838,6 @@ jobs:
           fi
 
       - name: Build universal AAB
-        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -857,7 +856,6 @@ jobs:
           cp "$SRC" "dist/${SLUG}-${VER}-universal.aab"
 
       - name: Validate universal AAB
-        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -882,7 +880,6 @@ jobs:
           java -jar "$RUNNER_TEMP/bundletool.jar" validate --bundle="$AAB"
 
       - name: Build universal APK
-        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -935,11 +932,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build (release, wasm)
-        if: ${{ !cancelled() }}
         run: cargo build --release --locked --target wasm32-unknown-unknown ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
 
       - name: Copy wasm artifact
-        if: ${{ !cancelled() }}
         run: |
           mkdir -p dist
           cp target/wasm32-unknown-unknown/release/${{ inputs.app-slug }}.wasm dist/
@@ -953,7 +948,7 @@ jobs:
           if-no-files-found: warn
 
   release:
-    if: ${{ always() && !cancelled() && !failure() && inputs.publish-release && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && !failure() && inputs.publish-release && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     needs:
       - prepare-version
       - build-desktop
@@ -992,7 +987,7 @@ jobs:
             dist/SHA256SUMS.txt
 
   dispatch-on-release:
-    if: ${{ inputs.dispatch-on-release != '[]' && !cancelled() }}
+    if: ${{ inputs.dispatch-on-release != '[]' && !cancelled() && !failure() }}
     needs:
       - prepare-version
       - release
@@ -1019,7 +1014,7 @@ jobs:
 
 
   publish-itch:
-    if: ${{ inputs.itch-username != '' && inputs.itch-game != '' && !cancelled() }}
+    if: ${{ inputs.itch-username != '' && inputs.itch-game != '' && !cancelled() && !failure() }}
     needs:
       - build-desktop
     runs-on: ubuntu-latest
@@ -1037,7 +1032,7 @@ jobs:
           channel: linux
 
   publish-play:
-    if: ${{ inputs.play-track != '' && inputs.play-track != 'none' && !cancelled() }}
+    if: ${{ inputs.play-track != '' && inputs.play-track != 'none' && !cancelled() && !failure() }}
     needs:
       - prepare-version
       - build-universal

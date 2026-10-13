@@ -209,7 +209,6 @@ jobs:
 
       - name: Prepare AAB artifacts
         id: aab
-        if: ${{ !cancelled() }}
         run: |
           mkdir -p artifacts
           # Find all AABs produced (covers single-variant and multi-variant builds)
@@ -287,11 +286,9 @@ jobs:
           whatsNewDirectory: ${{ steps.whatsnew.outputs.dir }}
 
       - name: Clean before APK build
-        if: ${{ !cancelled() }}
         run: ./gradlew clean
 
       - name: Build APK splits
-        if: ${{ !cancelled() }}
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
@@ -305,7 +302,6 @@ jobs:
           fi
 
       - name: Prepare APK artifacts
-        if: ${{ !cancelled() }}
         run: |
           mkdir -p artifacts
           # Find all APKs (exclude intermediate app-*.apk without arch naming, but keep apkDist renamed ones)
@@ -345,7 +341,7 @@ jobs:
           ls -lh artifacts/ || true
 
       - name: Upload artifacts (per flavor)
-        if: ${{ always() && (!cancelled() || steps.play-upload.outcome == 'failure') }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: android-${{ needs.prepare-version.outputs.version_name }}-${{ matrix.flavor || 'default' }}

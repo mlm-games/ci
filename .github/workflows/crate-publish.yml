@@ -310,7 +310,7 @@ jobs:
             dist/SHA256SUMS.txt
 
   dispatch-on-release:
-    if: ${{ inputs.dispatch-on-release != '[]' && !cancelled() }}
+    if: ${{ inputs.dispatch-on-release != '[]' && !cancelled() && !failure() }}
     needs:
       - version
       - publish
